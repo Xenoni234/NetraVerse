@@ -1,5 +1,26 @@
 # DESIGN — SIH26153: AI-Based Network Attack Forecasting (World Model)
 
+> ## ⚠ [CLAUDE.md](CLAUDE.md) is the authoritative context file
+>
+> The full problem-statement context landed after this document was drafted and **supersedes it**
+> wherever the two disagree. Reconciled on 2026-09-14:
+>
+> | Item | Was (this doc) | Now (CLAUDE.md) |
+> |---|---|---|
+> | Splits | 70 / 15 / 15 | **60 / 20 / 20** |
+> | Stage classes | 7 (incl. EXECUTION, IMPACT) | **6** (BENIGN + 5 ATT&CK stages) |
+> | Horizons `K=[1,2,4]` | +10 s / +20 s / +40 s | **+30 s / +60 s / +120 s** (decoder step = 30 s) |
+> | Encoder hidden | 256 | **128** |
+> | Loss weights | 1.0 / 3.0 / 0.5 | **1.0 / 2.0 / 1.0** |
+> | State loss | Huber | **Gaussian NLL** (head emits mean, log-variance) |
+> | MC-dropout passes | 30 | **20** |
+> | Feature count | 32 | **pending** — spec says 45, 31 enumerated (CLAUDE.md 10-B) |
+> | Test conditions | 1 | **3** (known / held-out family / cross-dataset) |
+> | Headline metric | F1 | **warning lead time** |
+>
+> Sections 2, 3, 5 and 6 below still contain the superseded numbers and are being rewritten.
+> **Read CLAUDE.md first.** Sections 1, 4, 7 and 8 remain accurate.
+
 > **Status:** DRAFT / scaffold. Sections marked **LOCKED** must not change without a team vote,
 > because downstream code (feature extractor, windowing, model heads, eval harness) hard-depends
 > on them. Everything else is open for iteration.

@@ -1,46 +1,55 @@
 """Attack family -> MITRE ATT&CK stage, the label the stage head predicts.
 
-Implements DESIGN.md section 4.2 (LOCKED). Seven classes: BENIGN plus six coarse
-kill-chain stages.
+Implements the labelling schema in CLAUDE.md section 8 (LOCKED). **Six classes**:
+BENIGN plus the five ATT&CK stages named in the problem statement.
 
-=== ==================== ======================= =================================
-id  Stage                ATT&CK tactic           Example families
-=== ==================== ======================= =================================
-0   BENIGN               --                      normal traffic
-1   RECON                TA0043 Reconnaissance   PortScan, Fuzzers, Analysis
-2   INITIAL_ACCESS       TA0001 Initial Access   Web Attack, Brute Force, Heartbleed
-3   EXECUTION            TA0002 Execution        Infiltration, Exploits, Shellcode
-4   C2                   TA0011 Command & Control Botnet, CTU-13 bot channels
-5   LATERAL_MOVEMENT     TA0008 Lateral Movement internal scanning, spread
-6   IMPACT               TA0040 Impact           DoS, DDoS, exfiltration
-=== ==================== ======================= =================================
+=== ==================== ========================== =================================
+id  Stage                ATT&CK tactic              Example families
+=== ==================== ========================== =================================
+0   BENIGN               --                         normal traffic
+1   RECON                TA0043 Reconnaissance      PortScan, Fuzzers, Analysis
+2   INITIAL_ACCESS       TA0001 Initial Access      SSH/FTP-BruteForce, Web Attack, Heartbleed, Exploits
+3   LATERAL_MOVEMENT     TA0008 Lateral Movement    Infiltration, Worms, internal spread
+4   C2                   TA0011 Command & Control   Bot/Botnet, Backdoor, CTU-13 bot channels
+5   EXFILTRATION         TA0010 Exfiltration        large outbound transfers, data theft
+=== ==================== ========================== =================================
 
 Judgement calls worth stating out loud
 --------------------------------------
-* **Brute force is INITIAL_ACCESS, not EXECUTION.** It is an attempt to obtain
-  credentials, which is access, not code execution.
-* **UNSW's "Backdoor" is C2**, not EXECUTION — the observable network behaviour
-  is a control channel, and we label what the network can actually see.
-* **LATERAL_MOVEMENT is under-represented** in all four public datasets, which
-  is why the success criterion is macro-F1 over 7 classes rather than accuracy.
-  Expect this class to be the weakest and say so in the report.
-* **Coarse tactics only.** Technique-level labels are not recoverable from flow
-  records; claiming them would be storytelling.
+* **Brute force is INITIAL_ACCESS, not a separate execution stage.** It is an
+  attempt to obtain credentials.
+* **UNSW's "Backdoor" is C2.** We label what the network can see; the install is
+  invisible to flow records, the control channel is not.
+* **CIC "Infiltration" is LATERAL_MOVEMENT.** The problem statement's six-class
+  scheme has no EXECUTION stage. Infiltration's network-observable phase is the
+  post-drop internal scanning, which is lateral movement.
+* **Coarse tactics only.** Technique-level labels (T1046, T1110, ...) are not
+  recoverable from flow records; claiming them would be storytelling.
+
+.. warning::
+   **DoS and DDoS have no home in the six-class scheme** and they are a large
+   fraction of attack windows in CIC-IDS2017/2018. They are neither
+   reconnaissance, access, lateral movement, C2, nor exfiltration. Mapping them
+   to EXFILTRATION would be simply wrong.
+
+   Current handling: :data:`STAGE_MASKED` — these windows keep
+   ``binary_label = 1`` and train the **risk head**, but are **masked out of the
+   stage-head loss**. See CLAUDE.md section 10-E; this needs a team decision
+   before training.
 
 Unknown families map to :data:`UNKNOWN_STAGE` and are **logged, not silently
 absorbed**. A new dataset with unmapped families must fail visibly.
 
 TODO
 ----
-* [ ] Complete ``FAMILY_TO_STAGE`` for every family in all four datasets.
+* [ ] Complete ``FAMILY_TO_STAGE`` for every family across all seven datasets.
 * [ ] Implement ``family_to_stage`` (scalar) and ``map_families`` (vectorised).
+* [ ] Implement ``stage_loss_mask`` and wire it into ``losses.stage_loss``.
 * [ ] Implement ``unmapped_families`` and call it during data loading.
-* [ ] Cross-check the table against ``docs/attack_taxonomy.md`` — the two must
-      agree, and a test should enforce it.
-* [ ] Decide how to label the *pre-attack* windows of a campaign: BENIGN, or the
-      upcoming stage? Labelling them with the upcoming stage is what would let
-      the model forecast *which* attack is coming, not just that one is. This is
-      an open design question — resolve it in DESIGN.md before training.
+* [ ] Cross-check against ``docs/attack_taxonomy.md`` — a test must enforce it.
+* [ ] RESOLVE 10-E (DoS/DDoS) before any stage-head training run.
+* [ ] DECIDE: label *pre-attack* windows BENIGN, or with the upcoming stage?
+      The latter is what would let the model forecast *which* attack is coming.
 """
 
 from __future__ import annotations
@@ -50,41 +59,43 @@ from typing import Final, Iterable, Mapping
 import pandas as pd
 
 # --------------------------------------------------------------------------- #
-# Stage ids — LOCKED
+# Stage ids — LOCKED (6 classes: 5 ATT&CK stages + benign)
 # --------------------------------------------------------------------------- #
 
 BENIGN: Final[int] = 0
 RECON: Final[int] = 1
 INITIAL_ACCESS: Final[int] = 2
-EXECUTION: Final[int] = 3
+LATERAL_MOVEMENT: Final[int] = 3
 C2: Final[int] = 4
-LATERAL_MOVEMENT: Final[int] = 5
-IMPACT: Final[int] = 6
+EXFILTRATION: Final[int] = 5
 
-N_STAGES: Final[int] = 7
+N_STAGES: Final[int] = 6
 
 #: Fallback for a family not in the table. Logged, never silently absorbed.
 UNKNOWN_STAGE: Final[int] = BENIGN
+
+#: Sentinel for windows that are genuine attacks but have no valid stage in the
+#: six-class scheme (currently DoS/DDoS). Masked out of the stage-head loss;
+#: still train the risk head. See CLAUDE.md section 10-E.
+STAGE_MASKED: Final[int] = -1
 
 STAGE_NAMES: Final[Mapping[int, str]] = {
     BENIGN: "BENIGN",
     RECON: "RECON",
     INITIAL_ACCESS: "INITIAL_ACCESS",
-    EXECUTION: "EXECUTION",
-    C2: "C2",
     LATERAL_MOVEMENT: "LATERAL_MOVEMENT",
-    IMPACT: "IMPACT",
+    C2: "C2",
+    EXFILTRATION: "EXFILTRATION",
 }
 
-#: ATT&CK tactic ids, for the report and the dashboard tooltips.
+#: ATT&CK tactic ids, for the report and dashboard tooltips.
 STAGE_TACTICS: Final[Mapping[int, str]] = {
     BENIGN: "",
     RECON: "TA0043",
     INITIAL_ACCESS: "TA0001",
-    EXECUTION: "TA0002",
-    C2: "TA0011",
     LATERAL_MOVEMENT: "TA0008",
-    IMPACT: "TA0040",
+    C2: "TA0011",
+    EXFILTRATION: "TA0010",
 }
 
 #: Short descriptions used by :mod:`src.explain.human_readable`.
@@ -92,10 +103,9 @@ STAGE_DESCRIPTIONS: Final[Mapping[int, str]] = {
     BENIGN: "No attack behaviour observed.",
     RECON: "Mapping the network: scanning hosts, ports or services.",
     INITIAL_ACCESS: "Trying to get in: credential brute force or exploiting an exposed service.",
-    EXECUTION: "Running code on a target or delivering an exploit payload.",
+    LATERAL_MOVEMENT: "Spreading from a compromised host to other internal systems.",
     C2: "Maintaining a control channel to a compromised host.",
-    LATERAL_MOVEMENT: "Spreading from the compromised host to other internal systems.",
-    IMPACT: "Causing damage: denial of service or data exfiltration.",
+    EXFILTRATION: "Moving data out of the network.",
 }
 
 # --------------------------------------------------------------------------- #
@@ -112,29 +122,29 @@ FAMILY_TO_STAGE: Final[Mapping[str, int]] = {
     "Fuzzers": RECON,
     "Analysis": RECON,
     # ---- initial access ----
+    "FTP-BruteForce": INITIAL_ACCESS,
+    "SSH-BruteForce": INITIAL_ACCESS,
     "FTP-Patator": INITIAL_ACCESS,
     "SSH-Patator": INITIAL_ACCESS,
     "BruteForce": INITIAL_ACCESS,
     "WebAttack": INITIAL_ACCESS,
     "Heartbleed": INITIAL_ACCESS,
-    # ---- execution ----
-    "Infiltration": EXECUTION,   # the DEFAULT held-out family (DESIGN.md section 5)
-    "Exploits": EXECUTION,
-    "Shellcode": EXECUTION,
-    "Worms": EXECUTION,
+    "Exploits": INITIAL_ACCESS,
+    "Shellcode": INITIAL_ACCESS,
+    # ---- lateral movement ----
+    "Infiltration": LATERAL_MOVEMENT,   # DEFAULT held-out family
+    "Worms": LATERAL_MOVEMENT,
     # ---- command and control ----
     "Bot": C2,
     "Botnet": C2,
-    "Backdoor": C2,              # network-observable behaviour is a control channel
-    # ---- lateral movement ----
-    # TODO: under-represented in the public datasets. CTU-13 internal spread
-    # scenarios are the best candidate source — confirm and add them here.
-    # ---- impact ----
-    "DoS": IMPACT,
-    "DDoS": IMPACT,
-    "Generic": IMPACT,
-    "Exfiltration": IMPACT,
-    # TODO: complete from docs/attack_taxonomy.md; a test must keep the two in sync.
+    "Backdoor": C2,
+    # ---- exfiltration ----
+    "Exfiltration": EXFILTRATION,
+    # ---- NO VALID STAGE: masked from the stage loss, see CLAUDE.md 10-E ----
+    "DoS": STAGE_MASKED,
+    "DDoS": STAGE_MASKED,
+    "Generic": STAGE_MASKED,
+    # TODO: complete from docs/attack_taxonomy.md, incl. CIC-IoT-2023 families.
 }
 
 
@@ -153,6 +163,10 @@ def family_to_stage(family: str, *, strict: bool = False) -> int:
             :data:`UNKNOWN_STAGE`. Use ``strict=True`` in tests and when
             onboarding a new dataset.
 
+    Returns:
+        A stage id in ``0..5``, or :data:`STAGE_MASKED` for an attack family with
+        no valid stage.
+
     Raises:
         KeyError: when ``strict`` and the family is unmapped.
     """
@@ -162,16 +176,26 @@ def family_to_stage(family: str, *, strict: bool = False) -> int:
 def map_families(families: pd.Series, *, strict: bool = False) -> pd.Series:
     """Vectorised family -> stage mapping over a column.
 
-    Logs the distinct unmapped families once, rather than per row.
+    Logs the distinct unmapped families once, not per row.
     """
     raise NotImplementedError("TODO: Series.map with a logged unmapped set")
+
+
+def stage_loss_mask(stages: pd.Series) -> pd.Series:
+    """Boolean mask of windows that should contribute to the stage-head loss.
+
+    False where the stage is :data:`STAGE_MASKED` (an attack with no valid stage
+    in the six-class scheme). Those windows still train the risk head — they are
+    real attacks — they just carry no usable stage target.
+    """
+    raise NotImplementedError("TODO: stages != STAGE_MASKED")
 
 
 def unmapped_families(families: Iterable[str]) -> set[str]:
     """Return the families absent from :data:`FAMILY_TO_STAGE`.
 
-    Call this during data loading: a new dataset with unmapped families should
-    surface immediately, not be silently absorbed into BENIGN.
+    Call during data loading: a new dataset with unmapped families should surface
+    immediately, not be silently absorbed into BENIGN.
     """
     raise NotImplementedError("TODO: set difference against the table keys")
 
@@ -191,16 +215,13 @@ def stage_order() -> tuple[int, ...]:
 
     Ordering the confusion matrix by kill-chain position makes the interesting
     errors visible: confusing adjacent stages is forgivable, confusing RECON with
-    IMPACT is not.
+    EXFILTRATION is not.
     """
     raise NotImplementedError("TODO: return the ids in kill-chain order")
 
 
 def families_for_stage(stage: int) -> tuple[str, ...]:
-    """Inverse lookup: every family mapped to ``stage``.
-
-    Used by the ablation report and by ``docs/attack_taxonomy.md`` generation.
-    """
+    """Inverse lookup: every family mapped to ``stage``."""
     raise NotImplementedError("TODO: invert FAMILY_TO_STAGE")
 
 
@@ -208,18 +229,19 @@ __all__ = [
     "BENIGN",
     "RECON",
     "INITIAL_ACCESS",
-    "EXECUTION",
-    "C2",
     "LATERAL_MOVEMENT",
-    "IMPACT",
+    "C2",
+    "EXFILTRATION",
     "N_STAGES",
     "UNKNOWN_STAGE",
+    "STAGE_MASKED",
     "STAGE_NAMES",
     "STAGE_TACTICS",
     "STAGE_DESCRIPTIONS",
     "FAMILY_TO_STAGE",
     "family_to_stage",
     "map_families",
+    "stage_loss_mask",
     "unmapped_families",
     "stage_name",
     "stage_description",

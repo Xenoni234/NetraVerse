@@ -21,7 +21,7 @@ paths:
   reports_dir: null
 
 data:
-  datasets: [cicids2017, cicids2018, unsw_nb15, ctu13]
+  datasets: [cicids2018, cicids2017, cic_iot2023, ctu13]  # cicids2018 = PRIMARY
   campaigns: null                 # null -> every campaign found
   entity_granularity: src_ip
   max_rows_per_file: null
@@ -38,7 +38,7 @@ windowing:
 
 labelling:
   pre_attack_horizon: 6
-  n_stages: 7
+  n_stages: 6
 
 features:
   use_packet_features: true       # needs system `tshark` on PATH
@@ -51,17 +51,17 @@ features:
 splits:
   # LOCKED policy — DESIGN.md section 5.
   strategy: chronological
-  train_frac: 0.70
-  val_frac: 0.15
-  test_frac: 0.15
+  train_frac: 0.60
+  val_frac: 0.20
+  test_frac: 0.20
   keep_campaigns_together: true
   held_out_family: Infiltration   # never seen in train/val
   gap_windows: 14                 # L + max(K); dropped at each boundary
 
 model:
   arch: lstm_encoder_decoder
-  input_size: 32
-  hidden_size: 256
+  input_size: 31
+  hidden_size: 128
   num_layers: 2
   dropout: 0.2
   bidirectional_encoder: false
@@ -84,8 +84,8 @@ training:
     min_lr: 1.0e-6
   loss_weights:
     state: 1.0
-    risk: 3.0                     # forecasting risk is the product goal
-    stage: 0.5
+    risk: 2.0                     # forecasting risk is the product goal
+    stage: 1.0
   class_weighting: balanced
   scheduled_sampling:
     enabled: true
@@ -106,7 +106,7 @@ eval:
   horizons: [1, 2, 4]
   threshold: null                 # chosen on val
   sustain_windows: 2
-  mc_dropout_samples: 30
+  mc_dropout_samples: 20
 
 logging:
   level: INFO

@@ -22,7 +22,7 @@ paths:
   reports_dir: null
 
 data:
-  datasets: [cicids2017, cicids2018, unsw_nb15, ctu13]
+  datasets: [cicids2018, cicids2017, cic_iot2023, ctu13, unsw_nb15]
   campaigns: null
   entity_granularity: src_ip
   cache_parquet: true
@@ -38,7 +38,7 @@ windowing:
 
 labelling:
   pre_attack_horizon: 6
-  n_stages: 7
+  n_stages: 6
 
 features:
   use_packet_features: true
@@ -48,9 +48,9 @@ features:
 
 splits:
   strategy: chronological
-  train_frac: 0.70
-  val_frac: 0.15
-  test_frac: 0.15
+  train_frac: 0.60
+  val_frac: 0.20
+  test_frac: 0.20
   keep_campaigns_together: true
   held_out_family: Infiltration
   gap_windows: 14
@@ -81,7 +81,7 @@ eval:
     - held_out_family
 
 uncertainty:
-  mc_dropout_samples: 30
+  mc_dropout_samples: 20
   confidence_interval: 0.90
 
 explain:
@@ -91,18 +91,26 @@ explain:
   top_k_features: 5               # how many features a sentence mentions
   target_head: risk
 
+# The three required test conditions — CLAUDE.md section 9.
+test_conditions:
+  - known_attacks       # chronological test split
+  - held_out_family     # train excludes one family entirely
+  - cross_dataset       # train on cicids2018, test on unsw_nb15
+
+cross_dataset:
+  train_on: cicids2018
+  test_on: unsw_nb15
+
 baselines:
-  # Every one of these must be beaten — DESIGN.md section 6.5.
+  # Persistence is MANDATORY in every results table — CLAUDE.md rule 2.
   - persistence
   - logistic_regression
 
 ablations:
-  # Reported as a table next to the full model.
-  - encoder_only                  # no decoder / no forward simulation
-  - flow_only                     # drop packet-level features
-  - shuffled_time                 # sanity check: must collapse to chance
-  - no_scheduled_sampling
-  - no_baseline_features
+  # The exact required rows — CLAUDE.md section 9.
+  - encoder_only                  # decoder disabled: proves forecasting adds value
+  - flow_only                     # no packet features
+  - shuffled_time                 # ordered vs shuffled history; must collapse
 
 output:
   report_dir: null                # null -> paths.REPORTS_DIR / name

@@ -39,7 +39,7 @@ windowing:
 
 labelling:
   pre_attack_horizon: 6           # strides counted as "pre-attack" (60 s)
-  n_stages: 7                     # BENIGN + 6 ATT&CK stages
+  n_stages: 6                     # BENIGN + 5 ATT&CK stages
 
 features:
   use_packet_features: false      # dev: skip TShark, flow features only
@@ -51,7 +51,7 @@ features:
 
 model:
   arch: lstm_encoder_decoder
-  input_size: 32                  # F — must match unified_schema.FEATURE_COLUMNS
+  input_size: 31                  # PENDING CLAUDE.md 10-B (spec says 45; 31 enumerated)
   hidden_size: 64                 # dev: small
   num_layers: 1
   dropout: 0.1
@@ -72,7 +72,7 @@ training:
   loss_weights:
     state: 1.0
     risk: 2.0
-    stage: 0.5
+    stage: 1.0
   class_weighting: balanced       # balanced | none | manual
   scheduled_sampling:
     enabled: true
