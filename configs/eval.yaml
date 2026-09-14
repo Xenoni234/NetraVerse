@@ -1,0 +1,114 @@
+# configs/eval.yaml
+# ---------------------------------------------------------------------------
+# EVALUATION CONFIG.
+# Points at a trained checkpoint and produces the numbers in DESIGN.md section 6:
+# F1 / PR-AUC per horizon, lead-time distribution, FPR, stage macro-F1, plus the
+# baseline and ablation comparison tables.
+#
+# The test split is touched ONCE. If you find yourself re-running this while
+# tuning, you are tuning on test — use eval.split=val instead.
+# ---------------------------------------------------------------------------
+
+name: eval_full
+seed: 1337
+device: auto
+
+checkpoint: models/best.ckpt      # overridable: scripts/evaluate.py --checkpoint ...
+
+paths:
+  data_root: null
+  processed_dir: null
+  models_dir: null
+  reports_dir: null
+
+data:
+  datasets: [cicids2017, cicids2018, unsw_nb15, ctu13]
+  campaigns: null
+  entity_granularity: src_ip
+  cache_parquet: true
+
+# ---- LOCKED: must match the training config the checkpoint came from ----
+windowing:
+  window_seconds: 30
+  stride_seconds: 10
+  history_length: 10
+  horizons: [1, 2, 4]
+  min_windows_per_entity: 14
+  drop_incomplete: true
+
+labelling:
+  pre_attack_horizon: 6
+  n_stages: 7
+
+features:
+  use_packet_features: true
+  use_baselines: true
+  use_trajectory: true
+  scaler: robust                  # scaler STATE is loaded from the checkpoint, not refit
+
+splits:
+  strategy: chronological
+  train_frac: 0.70
+  val_frac: 0.15
+  test_frac: 0.15
+  keep_campaigns_together: true
+  held_out_family: Infiltration
+  gap_windows: 14
+
+eval:
+  split: test                     # test | val — use val while iterating
+  batch_size: 512
+  horizons: [1, 2, 4]
+  threshold: null                 # null -> load from checkpoint, else pick on val
+  sustain_windows: 2
+  metrics:
+    - f1
+    - precision
+    - recall
+    - pr_auc
+    - roc_auc
+    - fpr
+    - lead_time
+    - stage_macro_f1
+    - state_mse
+  lead_time:
+    unit: seconds
+    report_percentiles: [25, 50, 75]
+  report_by:
+    - horizon
+    - dataset
+    - attack_family
+    - held_out_family
+
+uncertainty:
+  mc_dropout_samples: 30
+  confidence_interval: 0.90
+
+explain:
+  enabled: true
+  shap_background_size: 200
+  shap_n_samples: 500
+  top_k_features: 5               # how many features a sentence mentions
+  target_head: risk
+
+baselines:
+  # Every one of these must be beaten — DESIGN.md section 6.5.
+  - persistence
+  - logistic_regression
+
+ablations:
+  # Reported as a table next to the full model.
+  - encoder_only                  # no decoder / no forward simulation
+  - flow_only                     # drop packet-level features
+  - shuffled_time                 # sanity check: must collapse to chance
+  - no_scheduled_sampling
+  - no_baseline_features
+
+output:
+  report_dir: null                # null -> paths.REPORTS_DIR / name
+  save_predictions: true
+  save_plots: true
+  plot_formats: [png, svg]
+
+logging:
+  level: INFO

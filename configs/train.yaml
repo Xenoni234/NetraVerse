@@ -1,0 +1,114 @@
+# configs/train.yaml
+# ---------------------------------------------------------------------------
+# FULL TRAINING CONFIG.
+# All datasets, full model, real schedule. This is the config that produces the
+# checkpoint we report numbers for. Keep it in git — if you tune something and
+# it wins, the diff is the record of what changed.
+#
+# Window/labelling blocks are LOCKED (DESIGN.md sections 3 and 4) and must match
+# dev.yaml and eval.yaml exactly.
+# ---------------------------------------------------------------------------
+
+name: wm_full
+seed: 1337
+device: auto
+
+paths:
+  data_root: null
+  raw_dir: null
+  processed_dir: null
+  models_dir: null
+  reports_dir: null
+
+data:
+  datasets: [cicids2017, cicids2018, unsw_nb15, ctu13]
+  campaigns: null                 # null -> every campaign found
+  entity_granularity: src_ip
+  max_rows_per_file: null
+  cache_parquet: true
+
+# ---- LOCKED ----
+windowing:
+  window_seconds: 30
+  stride_seconds: 10
+  history_length: 10
+  horizons: [1, 2, 4]
+  min_windows_per_entity: 14
+  drop_incomplete: true
+
+labelling:
+  pre_attack_horizon: 6
+  n_stages: 7
+
+features:
+  use_packet_features: true       # needs system `tshark` on PATH
+  use_baselines: true
+  use_trajectory: true
+  scaler: robust
+  baseline_window_minutes: 60
+  peer_group_key: subnet_24
+
+splits:
+  # LOCKED policy — DESIGN.md section 5.
+  strategy: chronological
+  train_frac: 0.70
+  val_frac: 0.15
+  test_frac: 0.15
+  keep_campaigns_together: true
+  held_out_family: Infiltration   # never seen in train/val
+  gap_windows: 14                 # L + max(K); dropped at each boundary
+
+model:
+  arch: lstm_encoder_decoder
+  input_size: 32
+  hidden_size: 256
+  num_layers: 2
+  dropout: 0.2
+  bidirectional_encoder: false
+  heads:
+    state: true
+    risk: true
+    stage: true
+
+training:
+  epochs: 60
+  batch_size: 256
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  num_workers: 4
+  early_stopping_patience: 8
+  lr_scheduler:
+    name: cosine                  # cosine | plateau | none
+    warmup_epochs: 3
+    min_lr: 1.0e-6
+  loss_weights:
+    state: 1.0
+    risk: 3.0                     # forecasting risk is the product goal
+    stage: 0.5
+  class_weighting: balanced
+  scheduled_sampling:
+    enabled: true
+    schedule: inverse_sigmoid
+    start_prob: 0.0
+    end_prob: 0.9                 # by the end, mostly rolling its own predictions
+    warmup_epochs: 5
+
+checkpointing:
+  save_dir: null
+  monitor: val/risk_f1_k1
+  mode: max
+  save_top_k: 3
+  save_last: true
+  resume_from: null
+
+eval:
+  horizons: [1, 2, 4]
+  threshold: null                 # chosen on val
+  sustain_windows: 2
+  mc_dropout_samples: 30
+
+logging:
+  level: INFO
+  log_every_n_steps: 100
+  tensorboard: true
