@@ -63,3 +63,24 @@ under class imbalance).
 
 Checkpoint (weights + scaler + feature names + threshold) is written to `models/wm_final/best.ckpt`.
 Windowed features are cached to `data/processed/` after the first build.
+
+---
+
+## Demo & live test (offline)
+
+**Offline Streamlit dashboard** (`demo/app.py`): replays a recorded capture and shows the forecast
+risk curve rising **before** the true attack, with per-horizon forecasts, MC-dropout uncertainty,
+warning **lead time**, and a plain-English reason. Verified on CIC-IDS: host `192.168.10.50` warned
+~3990 s early (peak risk 85%).
+
+**Live test on a real server** (over Tailscale, bypassing the site's Cloudflare tunnel by attacking
+the server's tailnet IP directly):
+- `agent/capture.sh` — CICFlowMeter flow capture on the server (feature parity with training).
+- `scripts/calibrate.py` — recalibrate the alert threshold to the server's benign traffic.
+- `scripts/live_forecast.py` — live per-host onset forecasting + alerts + predictions store.
+- `docs/live_test_runbook.md` — authorized attack commands (nmap / hydra / DoS / web) and how to
+  read the result. Headline differentiator: forecasting a **slow scan's recon ramp** before it
+  completes, where a threshold IDS only fires after.
+
+Ingestion, calibration and live-forecast paths are validated locally on CICFlowMeter-format data
+(fired a 0.96 alert on the attacker host); only the server-side capture agent needs the live server.
