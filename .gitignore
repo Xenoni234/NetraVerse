@@ -18,8 +18,8 @@ dist/
 .eggs/
 
 # Data & models (never commit — see configs/*.yaml for expected paths)
-data/
-models/
+/data/
+/models/
 *.ckpt
 *.pt
 *.pth
@@ -31,15 +31,13 @@ models/
 .ipynb_checkpoints/
 
 # Experiment tracking
-mlruns/
-runs/
-outputs/
-wandb/
-
+/mlruns/
+/runs/
+/outputs/
+/wandb/
 # Logs
 *.log
-logs/
-
+/logs/
 # Tooling caches
 .pytest_cache/
 .mypy_cache/

@@ -50,6 +50,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--epochs-finetune", type=int, default=10)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--hidden-size", type=int, default=128)
+    ap.add_argument("--history-length", type=int, default=10,
+                    help="L: windows of history. Shorter -> more onset transitions qualify.")
+    ap.add_argument("--whole-campaign", action="store_true",
+                    help="split whole capture days into train/val/test (vs cutting each day by time). Fixes onset-positive starvation when attacks are time-clustered.")
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--target", choices=["onset", "ongoing"], default="onset",
                     help="onset = forecast attack BEFORE it starts (PS goal); ongoing = detection")
@@ -61,6 +65,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                     help="also train on the CIC-IDS2018 IP-bearing day (Tue-20-02, DDoS)")
     ap.add_argument("--max-rows-2018", type=int, default=2_000_000,
                     help="row cap for the 3.9GB 2018 day (memory)")
+    ap.add_argument("--add-ctu13", action="store_true",
+                    help="also train on CTU-13 botnet scenarios (C2 ramps)")
+    ap.add_argument("--ctu13-scenarios", nargs="*", default=["all"],
+                    help="CTU-13 scenario numbers, or all")
+    ap.add_argument("--max-rows-ctu13", type=int, default=500_000,
+                    help="per-scenario row cap for CTU-13")
     ap.add_argument("--seed", type=int, default=1337)
     ap.add_argument("--run-name", type=str, default="wm_cicids2017")
     return ap.parse_args(argv)
@@ -73,7 +83,8 @@ def set_seed(seed: int) -> None:
 
 
 def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, use_cache=True,
-                  granularity="src_ip"):
+                  granularity="src_ip", add_ctu13=False, ctu13_scenarios=("all",),
+                  max_rows_ctu13=500_000):
     """Load -> unify -> label -> per-entity windows. 2017 (all/selected days),
     optionally + the CIC-IDS2018 IP-bearing day (the only 2018 day with Source IP).
 
@@ -84,6 +95,7 @@ def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, us
     from src.data.paths import PROCESSED_DIR
 
     tag = (("all" if days == ["all"] else "-".join(days)) + ("_+2018" if add_2018 else "")
+           + ("_+ctu13" if add_ctu13 else "")
            + ("_pair" if granularity == "src_dst_pair" else ""))
     cache = PROCESSED_DIR / f"windows_cicids2017_{tag}.parquet"
     if use_cache and cache.exists():
@@ -106,6 +118,13 @@ def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, us
             print("  [data] added CIC-IDS2018 Tue-20-02 (DDoS, per-host)")
         else:
             print("  [data] WARNING: 2018 day lacks Source IP; skipped")
+    if add_ctu13:
+        for scen in ctu13_scenarios:
+            raw = loaders.load_ctu13(scen, max_rows=max_rows_ctu13, verbose=True)
+            uni = unified_schema.to_unified(raw, "ctu13")
+            lab = labeller.label_frame(uni, dataset="ctu13", verbose=False)
+            frames.append(lab)
+        print(f"  [data] added CTU-13 scenarios={list(ctu13_scenarios)}")
     flows = pd.concat(frames, ignore_index=True)
     print(f"\n[data] {len(flows):,} flows across {flows['campaign_id'].nunique()} campaign(s)")
     t = time.perf_counter()
@@ -118,9 +137,9 @@ def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, us
     return windows
 
 
-def sequences_for_split(windows: pd.DataFrame, target: str) -> W.SequenceBatch | None:
+def sequences_for_split(windows, target, cfg=None):
     try:
-        return W.build_sequences(windows, target=target)
+        return W.build_sequences(windows, cfg, target=target)
     except ValueError:
         return None
 
@@ -223,14 +242,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     windows = build_dataset(args.days, args.max_rows_per_day,
                             add_2018=args.add_2018, max_rows_2018=args.max_rows_2018,
-                            granularity=args.entity_granularity)
+                            granularity=args.entity_granularity,
+                            add_ctu13=args.add_ctu13, ctu13_scenarios=args.ctu13_scenarios,
+                            max_rows_ctu13=args.max_rows_ctu13)
 
     # Chronological split on the WINDOWS (per campaign), then sequence each split
     # separately so no sequence crosses a split boundary.
-    cfg = S.SplitConfig(time_col="window_start", family_col="attack_family")
+    cfg = S.SplitConfig(time_col="window_start", family_col="attack_family",
+                        whole_campaign=args.whole_campaign)
     parts = S.chronological_split(windows, config=cfg, verbose=True)
 
-    seq = {name: sequences_for_split(fr, args.target) for name, fr in parts.items()}
+    seq_cfg = W.WindowConfig(history_length=args.history_length,
+                            min_windows_per_entity=args.history_length + max(W.HORIZONS))
+    seq = {name: sequences_for_split(fr, args.target, seq_cfg) for name, fr in parts.items()}
     for name in ("train", "val", "test"):
         b = seq[name]
         print(f"  {name}: {0 if b is None else b.x.shape[0]:,} sequences")
@@ -308,6 +332,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Logistic-regression baseline: flattened L x F history -> per-horizon onset.
     # The fair classical-ML bar the world model must beat (CLAUDE.md rule 2).
     try:
+        import warnings
+        from sklearn.exceptions import ConvergenceWarning
         from sklearn.linear_model import LogisticRegression
         Xtr = W.apply_scaler(seq["train"].x, scaler).reshape(len(seq["train"].x), -1)
         Xte = W.apply_scaler(seq["test"].x, scaler).reshape(len(seq["test"].x), -1)
@@ -316,8 +342,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             ytr = seq["train"].y_risk[:, i]
             if len(np.unique(ytr)) < 2:
                 continue
-            lr = LogisticRegression(max_iter=2000, class_weight="balanced")
-            lr.fit(Xtr, ytr)
+            # saga + higher iter cap converges on the flattened 340-dim history;
+            # suppress the (harmless) non-convergence warning either way.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # convergence + deprecation noise
+                lr = LogisticRegression(max_iter=5000, class_weight="balanced",
+                                        solver="saga", n_jobs=-1)
+                lr.fit(Xtr, ytr)
             lr_prob[:, i] = lr.predict_proba(Xte)[:, 1]
         evaluate("LOGISTIC REGRESSION (flattened history)", lr_prob, tt, 0.5, horizons)
     except Exception as exc:  # noqa: BLE001
