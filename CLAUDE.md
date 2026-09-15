@@ -255,6 +255,18 @@ real work for "live" is a **live feature pipeline**: sniff packets on the server
 runway (scan, brute-force, botnet beaconing) can be forecast 30–120 s ahead; single-packet exploits
 cannot, and we will not claim otherwise. Revisit only once the replay demo is solid.
 
+> **F — EXECUTED end-to-end 2026-09-16 (see RESULTS.md "Live server test").** Ran the full pipeline
+> against a real Ubuntu 24.04 server over Tailscale (attacked the tailnet IP to bypass Cloudflare).
+> Flows via Python `cicflowmeter` (patched a signature-order bug in its 0.5.0 `create_sniffer`);
+> ingested through `src/inference/live.py` (`cicflowmeter_py` column map). Calibrated on benign
+> server traffic → threshold 0.0024 (p99 × 2 margin, 0 % benign FP). A paced port scan fired the
+> first alert **within one 30 s window of onset**, risk rising ~7× (0.001 → 0.010) with correct
+> feature attribution (fan-out 3→110, entropy 0.40→6.78, failed-conn 0.07→1.0). Honest limits:
+> abrupt scan → ~0 lead time (detection at onset, not before); low absolute risk (data ceiling +
+> domain shift) but clean benign/attack separation. Live artifacts in `data/live/`. **Landmines:**
+> cicflowmeter writes timestamps in **server-local time** (not UTC); a **60-way parallel scan
+> self-throttled** the client — use low parallelism (which also mirrors a stealthy scan).
+
 ---
 
 **G. Forecast target = ATTACK ONSET (decided 2026-09-15, user-approved).** The first working model

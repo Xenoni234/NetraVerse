@@ -39,6 +39,10 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=str(REPO_ROOT / "models" / "wm_server" / "best.ckpt"))
     ap.add_argument("--benign-percentile", type=float, default=99.0,
                     help="risk percentile of benign traffic to set as the alert threshold")
+    ap.add_argument("--safety-margin", type=float, default=1.0,
+                    help="multiply the benign percentile by this to leave headroom above "
+                         "benign noise (e.g. 2.0). With a small benign sample the p99 sits at "
+                         "the benign max and grazes it; a margin gives clean separation.")
     ap.add_argument("--horizon", type=int, default=4, help="horizon (windows) to calibrate on")
     args = ap.parse_args(argv)
 
@@ -65,12 +69,13 @@ def main(argv=None) -> int:
         return 1
     risk = np.concatenate(risks)
 
-    thr = float(np.percentile(risk, args.benign_percentile))
+    pct = float(np.percentile(risk, args.benign_percentile))
+    thr = pct * args.safety_margin
     print(f"\n[calib] benign risk distribution (+{args.horizon*30}s):")
     print(f"        mean {risk.mean():.4f} | p50 {np.percentile(risk,50):.4f} | "
           f"p95 {np.percentile(risk,95):.4f} | p99 {np.percentile(risk,99):.4f} | max {risk.max():.4f}")
-    print(f"[calib] new alert threshold (p{args.benign_percentile:g}) = {thr:.4f}  "
-          f"(was {fc.threshold:.4f})")
+    print(f"[calib] p{args.benign_percentile:g} = {pct:.4f} x margin {args.safety_margin:g} "
+          f"-> alert threshold = {thr:.4f}  (was {fc.threshold:.4f})")
     est_fp = float((risk >= thr).mean())
     print(f"[calib] estimated benign windows that would alert at this threshold: {est_fp:.2%}")
 

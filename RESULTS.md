@@ -84,3 +84,41 @@ the server's tailnet IP directly):
 
 Ingestion, calibration and live-forecast paths are validated locally on CICFlowMeter-format data
 (fired a 0.96 alert on the attacker host); only the server-side capture agent needs the live server.
+
+### Live server test — executed end-to-end (2026-09-16)
+
+Ran the full pipeline against a real Ubuntu 24.04 server over Tailscale (attacking the tailnet IP
+directly to bypass the site's Cloudflare tunnel). Flow features produced on the server with the
+Python `cicflowmeter` (a signature-order bug in its 0.5.0 `create_sniffer` was patched), pulled over
+`scp`, ingested via `src/inference/live.py` (auto-detected the snake_case `cicflowmeter_py` column
+map — all 25 features matched).
+
+**Calibration** on ~8 min of benign server traffic (219 flows): benign forecast risk is flat and
+near-zero (mean 0.0010, p99 0.0012). Alert threshold set to **0.0024** (p99 × 2 safety margin →
+0.00 % benign false-alarm rate).
+
+**Attack** — a paced TCP connect scan of ports 1–500 from a second tailnet host, captured on the
+same interface after a 5-min benign runway (so the scanning host had ≥10 windows of history). Result
+at the +120 s horizon:
+
+| Phase | Window (server local) | Forecast risk |
+|---|---|---|
+| benign | 02:52:00 – 02:52:30 | **0.001** (no alert) |
+| scan onset | 02:53:00 | **0.004** → first sustained alert |
+| scan | 02:53:30 → 02:54:30 | 0.006 → 0.008 → **0.010** (peak) |
+
+- **Benign is silent; the scan fires within one 30 s window of onset** (scan launched 02:52:52, first
+  alert window 02:53:00). Risk rises **~7× (0.001 → 0.010)**, monotonically, tracking the fan-out.
+- **Explanation (auto-generated, cites observed numbers):** destination-port fan-out 3 → 110,
+  port-entropy 0.40 → 6.78, failed-connection ratio 0.07 → 1.00, RSTs 5 → 220.
+- **Honest framing:** the scan was *abrupt* (fan-out jumps instantly), so lead time is ≈ 0 — this is
+  **detection at onset**, not before. Genuine early warning needs a slow/stealthy recon ramp (next
+  experiment). Absolute risk is low (~0.01) — the documented data ceiling plus lab→server domain
+  shift — but the benign/attack **separation is clean** and the server-calibrated threshold catches
+  it reliably.
+- **Real-world note:** the first (60-way parallel) scan attempt saturated the connection path and
+  self-throttled; a paced, low-parallelism scan both captured cleanly and mirrors a realistic
+  stealthy scan.
+
+Repro: `scripts/calibrate.py --flows <benign.csv> --safety-margin 2.0` then forecast the attack CSV
+via `src/inference/engine.py` (or `scripts/live_forecast.py --flows <dir> --once`).
