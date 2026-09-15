@@ -28,7 +28,27 @@ from src.data.unified_schema import (
     FLOW_FEATURE_COLUMNS,
 )
 
-_CANDIDATE_MAPS = {"cicids2017": CICIDS2017_COLUMN_MAP, "cicids2018": CICIDS2018_COLUMN_MAP}
+#: Python `cicflowmeter` (pip) emits snake_case columns, in microseconds like CIC.
+#: Mapping them lets us skip the finicky Java CICFlowMeter build on the server.
+CICFLOWMETER_PY_COLUMN_MAP = {
+    "src_ip": "src_ip", "dst_ip": "dst_ip", "src_port": "src_port",
+    "dst_port": "dst_port", "protocol": "protocol", "timestamp": "timestamp",
+    "flow_duration": "flow_duration",
+    "flow_pkts_s": "packets_per_second", "flow_byts_s": "bytes_per_second",
+    "down_up_ratio": "fwd_bwd_ratio",
+    "tot_fwd_pkts": "fwd_packets", "tot_bwd_pkts": "bwd_packets",
+    "totlen_fwd_pkts": "fwd_bytes", "totlen_bwd_pkts": "bwd_bytes",
+    "flow_iat_mean": "iat_mean", "flow_iat_std": "iat_std", "flow_iat_max": "iat_max",
+    "syn_flag_cnt": "syn_count", "ack_flag_cnt": "ack_count", "fin_flag_cnt": "fin_count",
+    "rst_flag_cnt": "rst_count", "psh_flag_cnt": "psh_count", "urg_flag_cnt": "urg_count",
+    "pkt_len_mean": "pkt_len_mean", "pkt_len_std": "pkt_len_std",
+}
+
+_CANDIDATE_MAPS = {
+    "cicids2017": CICIDS2017_COLUMN_MAP,
+    "cicids2018": CICIDS2018_COLUMN_MAP,
+    "cicflowmeter_py": CICFLOWMETER_PY_COLUMN_MAP,
+}
 
 
 def _detect_map(columns: list[str]) -> tuple[str, dict]:
