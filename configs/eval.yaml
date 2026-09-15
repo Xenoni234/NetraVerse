@@ -30,7 +30,7 @@ data:
 # ---- LOCKED: must match the training config the checkpoint came from ----
 windowing:
   window_seconds: 30
-  stride_seconds: 10
+  stride_seconds: 30             # disjoint 30s windows (research docs; K=1,2,4 -> 30/60/120s)
   history_length: 10
   horizons: [1, 2, 4]
   min_windows_per_entity: 14

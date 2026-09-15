@@ -149,6 +149,145 @@ FAMILY_TO_STAGE: Final[Mapping[str, int]] = {
 
 
 # --------------------------------------------------------------------------- #
+# CTU-13 raw label strings -> canonical family
+# --------------------------------------------------------------------------- #
+
+
+def ctu13_family(raw_label: str, *, strict: bool = False) -> str:
+    """Map a CTU-13 binetflow ``Label`` (e.g. ``flow=From-Botnet-V45-TCP``) to a family.
+
+    Substring rules: anything containing "Botnet" is the bot's malicious traffic
+    (-> Bot -> C2). "Normal" and "Background" are treated as benign, which gives
+    infected hosts a benign run-up before their C2 onset (the ramp we forecast).
+    Background is unverified traffic; treating it as benign is a documented choice.
+    """
+    s = str(raw_label)
+    if "Botnet" in s:
+        return "Bot"
+    if "Normal" in s or "Background" in s:
+        return "BENIGN"
+    if strict:
+        raise KeyError(f"Unmapped CTU-13 label {raw_label!r}")
+    return "BENIGN"
+
+
+# --------------------------------------------------------------------------- #
+# CIC-IDS2018 raw label strings -> canonical family
+# --------------------------------------------------------------------------- #
+
+#: Exact ``Label`` column values as they appear in the CSE-CIC-IDS2018 CSVs,
+#: mapped to the canonical families in :data:`FAMILY_TO_STAGE`.
+#:
+#: These strings are matched **verbatim** (after whitespace strip). The dataset
+#: is inconsistent about case and spacing, and one label is misspelled in the
+#: source data — do not "fix" the keys, they must match the CSVs byte for byte:
+#:
+#: * ``"SSH-Bruteforce"`` — lowercase ``f``, unlike ``"FTP-BruteForce"``
+#: * ``"Infilteration"`` — **misspelled in the dataset**. This is the default
+#:   held-out family, so the misspelling matters: a silent miss here would put
+#:   the held-out family back into the training set.
+#: * ``"DDOS attack-HOIC"`` vs ``"DDoS attacks-LOIC-HTTP"`` — inconsistent caps
+#:   and plurals across days.
+CICIDS2018_LABEL_TO_FAMILY: Final[Mapping[str, str]] = {
+    "Benign": "BENIGN",
+    "BENIGN": "BENIGN",
+    # Wednesday-14-02-2018
+    "FTP-BruteForce": "FTP-BruteForce",
+    "SSH-Bruteforce": "SSH-BruteForce",
+    # Thursday-15-02-2018 / Friday-16-02-2018
+    "DoS attacks-GoldenEye": "DoS",
+    "DoS attacks-Slowloris": "DoS",
+    "DoS attacks-Hulk": "DoS",
+    "DoS attacks-SlowHTTPTest": "DoS",
+    # Tuesday-20-02-2018 / Wednesday-21-02-2018
+    "DDoS attacks-LOIC-HTTP": "DDoS",
+    "DDOS attack-HOIC": "DDoS",
+    "DDOS attack-LOIC-UDP": "DDoS",
+    # Thursday-22-02-2018 / Friday-23-02-2018
+    "Brute Force -Web": "WebAttack",
+    "Brute Force -XSS": "WebAttack",
+    "SQL Injection": "WebAttack",
+    # Thursday-01-03-2018  (misspelled in the source data)
+    "Infilteration": "Infiltration",
+    # Friday-02-03-2018
+    "Bot": "Bot",
+}
+
+#: The label string the CSVs use for benign traffic.
+BENIGN_LABEL: Final[str] = "Benign"
+
+
+# --------------------------------------------------------------------------- #
+# CIC-IDS2017 raw label strings -> canonical family
+# --------------------------------------------------------------------------- #
+
+#: CIC-IDS2017 ``Label`` values -> canonical family. The web-attack labels contain
+#: a UTF-8 en-dash (``Web Attack – Brute Force``); rather than depend on that
+#: byte surviving every re-encoding, :func:`cicids2017_family` matches any label
+#: starting with "Web Attack" as ``WebAttack``. The rest match verbatim.
+CICIDS2017_LABEL_TO_FAMILY: Final[Mapping[str, str]] = {
+    "BENIGN": "BENIGN",
+    "Bot": "Bot",
+    "DDoS": "DDoS",
+    "DoS GoldenEye": "DoS",
+    "DoS Hulk": "DoS",
+    "DoS Slowhttptest": "DoS",
+    "DoS slowloris": "DoS",
+    "FTP-Patator": "FTP-Patator",
+    "SSH-Patator": "SSH-Patator",
+    "Heartbleed": "Heartbleed",
+    "Infiltration": "Infiltration",   # default held-out family
+    "PortScan": "PortScan",
+    # "Web Attack – ..." handled by prefix in cicids2017_family()
+}
+
+
+def cicids2017_family(raw_label: str, *, strict: bool = False) -> str:
+    """Map a raw CIC-IDS2017 ``Label`` value to a canonical family.
+
+    Web-attack variants (which carry an en-dash in the source) collapse to
+    ``WebAttack`` by prefix; everything else matches :data:`CICIDS2017_LABEL_TO_FAMILY`
+    verbatim after whitespace strip.
+    """
+    key = str(raw_label).strip()
+    if key.startswith("Web Attack"):
+        return "WebAttack"
+    if key in CICIDS2017_LABEL_TO_FAMILY:
+        return CICIDS2017_LABEL_TO_FAMILY[key]
+    if strict:
+        raise KeyError(
+            f"Unmapped CIC-IDS2017 label {raw_label!r}. Add it to "
+            f"CICIDS2017_LABEL_TO_FAMILY; known: {sorted(CICIDS2017_LABEL_TO_FAMILY)}"
+        )
+    return "UNKNOWN"
+
+
+def cicids2018_family(raw_label: str, *, strict: bool = False) -> str:
+    """Map a raw CIC-IDS2018 ``Label`` value to a canonical family.
+
+    Args:
+        raw_label: Verbatim cell value from the ``Label`` column.
+        strict: Raise on an unknown label instead of returning ``"UNKNOWN"``.
+
+    Returns:
+        Canonical family string, a key of :data:`FAMILY_TO_STAGE`.
+
+    Raises:
+        KeyError: when ``strict`` and the label is not in the table.
+    """
+    key = str(raw_label).strip()
+    if key in CICIDS2018_LABEL_TO_FAMILY:
+        return CICIDS2018_LABEL_TO_FAMILY[key]
+    if strict:
+        raise KeyError(
+            f"Unmapped CIC-IDS2018 label {raw_label!r}. "
+            f"Add it to CICIDS2018_LABEL_TO_FAMILY; known labels: "
+            f"{sorted(CICIDS2018_LABEL_TO_FAMILY)}"
+        )
+    return "UNKNOWN"
+
+
+# --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
 
@@ -170,7 +309,15 @@ def family_to_stage(family: str, *, strict: bool = False) -> int:
     Raises:
         KeyError: when ``strict`` and the family is unmapped.
     """
-    raise NotImplementedError("TODO: dict lookup with the strict/fallback branch")
+    key = str(family).strip()
+    if key in FAMILY_TO_STAGE:
+        return FAMILY_TO_STAGE[key]
+    if strict:
+        raise KeyError(
+            f"Unmapped attack family {family!r}. Add it to FAMILY_TO_STAGE "
+            f"(and docs/attack_taxonomy.md)."
+        )
+    return UNKNOWN_STAGE
 
 
 def map_families(families: pd.Series, *, strict: bool = False) -> pd.Series:
@@ -178,7 +325,17 @@ def map_families(families: pd.Series, *, strict: bool = False) -> pd.Series:
 
     Logs the distinct unmapped families once, not per row.
     """
-    raise NotImplementedError("TODO: Series.map with a logged unmapped set")
+    import logging
+
+    cleaned = families.astype("string").str.strip()
+    missing = set(cleaned.dropna().unique()) - set(FAMILY_TO_STAGE)
+    if missing:
+        if strict:
+            raise KeyError(f"Unmapped attack families: {sorted(missing)}")
+        logging.getLogger(__name__).warning(
+            "Unmapped attack families mapped to BENIGN: %s", sorted(missing)
+        )
+    return cleaned.map(FAMILY_TO_STAGE).fillna(UNKNOWN_STAGE).astype("int64")
 
 
 def stage_loss_mask(stages: pd.Series) -> pd.Series:
@@ -188,7 +345,7 @@ def stage_loss_mask(stages: pd.Series) -> pd.Series:
     in the six-class scheme). Those windows still train the risk head — they are
     real attacks — they just carry no usable stage target.
     """
-    raise NotImplementedError("TODO: stages != STAGE_MASKED")
+    return stages != STAGE_MASKED
 
 
 def unmapped_families(families: Iterable[str]) -> set[str]:
@@ -197,17 +354,24 @@ def unmapped_families(families: Iterable[str]) -> set[str]:
     Call during data loading: a new dataset with unmapped families should surface
     immediately, not be silently absorbed into BENIGN.
     """
-    raise NotImplementedError("TODO: set difference against the table keys")
+    return {str(f).strip() for f in families} - set(FAMILY_TO_STAGE)
 
 
 def stage_name(stage: int) -> str:
     """Human-readable stage name."""
-    raise NotImplementedError("TODO: STAGE_NAMES lookup with a clear error")
+    if stage == STAGE_MASKED:
+        return "NO_STAGE(masked)"
+    try:
+        return STAGE_NAMES[stage]
+    except KeyError:
+        raise KeyError(f"Unknown stage id {stage}; valid ids are {sorted(STAGE_NAMES)}") from None
 
 
 def stage_description(stage: int) -> str:
     """One-sentence description, used in alert narratives."""
-    raise NotImplementedError("TODO: STAGE_DESCRIPTIONS lookup")
+    if stage == STAGE_MASKED:
+        return "Attack traffic with no stage in the six-class scheme (see CLAUDE.md 10-E)."
+    return STAGE_DESCRIPTIONS.get(stage, "Unknown stage.")
 
 
 def stage_order() -> tuple[int, ...]:
@@ -217,15 +381,21 @@ def stage_order() -> tuple[int, ...]:
     errors visible: confusing adjacent stages is forgivable, confusing RECON with
     EXFILTRATION is not.
     """
-    raise NotImplementedError("TODO: return the ids in kill-chain order")
+    return (BENIGN, RECON, INITIAL_ACCESS, LATERAL_MOVEMENT, C2, EXFILTRATION)
 
 
 def families_for_stage(stage: int) -> tuple[str, ...]:
     """Inverse lookup: every family mapped to ``stage``."""
-    raise NotImplementedError("TODO: invert FAMILY_TO_STAGE")
+    return tuple(sorted(f for f, s in FAMILY_TO_STAGE.items() if s == stage))
 
 
 __all__ = [
+    "BENIGN_LABEL",
+    "CICIDS2017_LABEL_TO_FAMILY",
+    "cicids2017_family",
+    "ctu13_family",
+    "CICIDS2018_LABEL_TO_FAMILY",
+    "cicids2018_family",
     "BENIGN",
     "RECON",
     "INITIAL_ACCESS",

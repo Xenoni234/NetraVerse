@@ -21,7 +21,10 @@ paths:
   reports_dir: null
 
 data:
-  datasets: [cicids2018, cicids2017, cic_iot2023, ctu13]  # cicids2018 = PRIMARY
+  datasets: [cicids2017]          # PRIMARY (per-host capable: has Source IP + Timestamp)
+  variant: TrafficLabelling       # 2017: the only variant with Timestamp + IP
+  entity_granularity: src_ip      # per-host snapshots (user decision 2026-09-15)
+  # NOTE: CIC-IDS2018 is IP-stripped on 9/10 days -> whole-network only; separate experiment config.
   campaigns: null                 # null -> every campaign found
   entity_granularity: src_ip
   max_rows_per_file: null
@@ -30,7 +33,7 @@ data:
 # ---- LOCKED ----
 windowing:
   window_seconds: 30
-  stride_seconds: 10
+  stride_seconds: 30             # disjoint 30s windows (research docs; K=1,2,4 -> 30/60/120s)
   history_length: 10
   horizons: [1, 2, 4]
   min_windows_per_entity: 14

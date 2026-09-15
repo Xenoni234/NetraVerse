@@ -84,6 +84,19 @@ Colab mount path used by the team: `/content/drive/MyDrive/SIH 2026 dataset/`
 
 ---
 
+> **Data audit (2026-09-15, files now on disk).** Findings that shaped the build:
+> - **CIC-IDS2017 `TrafficLabelling`** has Timestamp + Source IP + Label -> per-host forecasting.
+>   The `MachineLearningCVE` copy has **no Timestamp** -> dropped (glob restricted to TrafficLabelling).
+> - **CIC-IDS2018**: 9/10 day files are **IP-stripped** (80 cols, no Src/Dst IP); only the 3.9 GB
+>   `Thuesday-20-02` file (84 cols, misspelled on disk) carries IPs. So 2018 cannot do per-host in general.
+> - 2017 vs 2018 use **different column names** -> separate maps (`CICIDS2017_COLUMN_MAP`).
+> - 2017 quirks handled in the loader: duplicate `Fwd Header Length` column; Windows-1252 en-dash in
+>   the "Web Attack" labels (read as latin-1, matched by prefix).
+>
+> **Decision (user, 2026-09-15): snapshot unit = per computer (host).** Therefore the **primary
+> training set is CIC-IDS2017 (TrafficLabelling)**; 2018 is whole-network extra + its one IP-bearing
+> day; UNSW-NB15 stays the cross-dataset test. `configs/train.yaml` now trains on `cicids2017`.
+
 ## 4. Feature schema (locked)
 
 ### Flow-level (from CICFlowMeter output)
@@ -108,9 +121,14 @@ Colab mount path used by the team: `/content/drive/MyDrive/SIH 2026 dataset/`
 `baseline_deviation` (Δ from per-host 7-day baseline)
 `trajectory_velocity` (derivative of key features)
 
-> **OPEN — blocks the locked schema.** The model spec says `input = 45 features`. The lists above
-> total **31 numeric** (17 flow numeric + 8 packet + 6 behavioral) plus 5 identity columns = 36.
-> **14 features are unaccounted for.** See §9-B. Do not invent them.
+> **RESOLVED 2026-09-15 (was open question B).** The "missing 14" was a malformed question. Per
+> M3 §20, F is **derived, not decreed** — it is finalised only after categorical expansion and
+> missing-value indicators are added. The gap to 45 is made of: (a) **protocol one-hot** — one
+> `protocol` field becomes `[is_tcp, is_udp, is_icmp, is_other]` (M3 §15); (b) **missing-mask
+> columns** — one flag per feature that can be absent, because "0" and "not observed" are different
+> and conflating them is a bug (M3 §12). So `input_size` is read from the feature dictionary the
+> state-builder produces, never hard-coded. The `input_size: 31` in the configs is a placeholder and
+> will be overwritten once the dictionary exists.
 
 ---
 
@@ -119,15 +137,18 @@ Colab mount path used by the team: `/content/drive/MyDrive/SIH 2026 dataset/`
 | Parameter | Value |
 |---|---|
 | Window size | **30 s** |
-| Stride | **10 s** (overlapping, 3-deep) |
+| Stride | **30 s** (disjoint, back-to-back) |
 | History length `L` | **10 windows** (5 minutes of history) |
+| Rollout length | **4 windows** (simulate next 2 minutes) |
 | Forecast horizons `K` | **[1, 2, 4]** → **30 s / 60 s / 120 s** ahead |
 
-> **Reading of the horizon/stride interaction** (confirm — §9-A): the decoder step is **30 s = one
-> window length = 3 strides**, not one stride. The decoder unrolls **4 steps** (t+30, t+60, t+90,
-> t+120) and `K=[1,2,4]` selects steps 1, 2 and 4 → +30 s, +60 s, +120 s. Windows are still *emitted*
-> every 10 s; the *forecast* advances in 30 s jumps. This is the only reading consistent with both
-> "stride 10 s" and "K=[1,2,4] = 30s/60s/120s".
+> **RESOLVED 2026-09-15 (was open question A).** Stride is **30 s disjoint**, per both research docs
+> (M3 §10: "Compare 30-second disjoint windows first, with L = 10 and K = 2"; Workflow §5:
+> "Window stride — 30 seconds"). My earlier 10-s-overlap guess was wrong and is retracted. With
+> disjoint 30-s windows each decoder step is exactly one window, so `K=[1,2,4]` maps directly to
+> +30 / +60 / +120 s with no re-indexing. History spans `L × 30 s = 300 s = 5 min`. The derived
+> counts are unchanged: `min_windows_per_entity = gap_windows = L + max(K) = 14` (in window units).
+> All three configs updated.
 
 ---
 
@@ -206,14 +227,84 @@ Start weights: **λ_state = 1.0, λ_risk = 2.0, λ_stage = 1.0**
 
 ---
 
-## 10. Open questions — blocking, need a decision
+## 10. Decisions log
 
-**A. Horizon step size.** Stated reading in §5 (decoder step = 30 s = 3 strides). Confirm or correct.
-*Blocks:* windowing, sequence construction, every metric label.
+Updated 2026-09-15 after reading the three research PDFs (Member 3 feature doc, Member 4 world-model
+doc, Workflow). User approved "go with the research recommendations" on the six-item plain-language
+list (stride, horizons, leakage/no-peek, missing masks, defer OpTC, pretrain-normal-first).
 
-**B. The 45-feature list.** 14 of 45 are unaccounted for (§4). Need the missing names, or a decision
-to lock the schema at 31 numeric features and set `input_size=31`.
-*Blocks:* `unified_schema.FEATURE_COLUMNS`, encoder input size, the parquet cache.
+**A. Horizon / stride — RESOLVED.** 30-s **disjoint** windows (stride = 30 s). See §5. My earlier
+10-s-overlap guess was wrong and is retracted. All three configs updated.
+
+**B. Feature count — RESOLVED.** F is derived, not decreed (§4). Protocol one-hot + missing-mask
+columns close the gap to ~45; `input_size` comes from the state-builder's dictionary. `input_size:
+31` in configs is a placeholder.
+
+**D. Completed-flow leakage — RESOLVED (approach chosen).** Assign each flow to the window containing
+its **end / availability** time, so every feature is known by window close; a long flow contributes
+nothing to the windows it spans. This is the concrete form of the approved no-peek rule. The
+partial-flow-from-PCAP alternative stays available where PCAPs exist but is not the default. Changes
+`windowing.py` and the meaning of every volume feature — build it in from the start.
+
+**F. Live deployment test — DEFERRED to Phase 6 / stretch.** User has an owned test server with full
+access and wants to launch real attacks at it and watch the model forecast them (authorised testing
+on their own infra). Decision: **replay demo is primary** (safe, always works); **live demo is
+stretch**. Offline requirement is already satisfied by the design (no APIs, ~10 MB local model). The
+real work for "live" is a **live feature pipeline**: sniff packets on the server → build the same
+30-s flow windows in real time → feed the model. Same model, new input path. Only attacks with a
+runway (scan, brute-force, botnet beaconing) can be forecast 30–120 s ahead; single-packet exploits
+cannot, and we will not claim otherwise. Revisit only once the replay demo is solid.
+
+---
+
+**G. Forecast target = ATTACK ONSET (decided 2026-09-15, user-approved).** The first working model
+trained on "attack ongoing" (future binary_label) and **lost to persistence** (F1 0.01 vs 0.40-0.59):
+per-host, "attacking now" trivially predicts "attacking in 30s", so persistence wins. Reframed the
+risk target to **onset** — at a currently-benign origin window, predict whether an attack *begins*
+within k windows (from `distance_to_attack`). Persistence structurally scores ~0 on onset (a
+benign-looking host -> "benign"), which is the point. `build_sequences(target="onset")` is the
+default; `"ongoing"` kept for the ablation. This is the PS's "warn before compromise" and yields a
+real lead-time number.
+
+**Ramp confirmed (2026-09-15).** Diagnostic on 386 onsets: the 4 windows before an attack show
+elevated `dst_port_entropy` (0.5-1.06 vs benign 0.0), `n_distinct_dst_port`, `n_distinct_dst_ip`,
+`flows_per_sec` (2-5x). So onset IS forecastable — weak model performance is a tuning/feature issue,
+not a data dead-end. Two dead features found and fixed: `new_peer_count` (now a true vectorised
+never-before-seen-destination count) and the behavioural derivatives (re-pointed at the ramp:
+`trajectory_velocity` = d(port-entropy), `baseline_deviation` = robust-z of flows/sec, floored+clipped).
+
+**Results so far (2026-09-15, onset target, 2017 all-days + 2018 IP-day, pos_weight cap 30):**
+world model **beats persistence and logistic regression at every horizon** — PR-AUC 0.052/0.073/0.079
+at +30/60/120s vs persistence 0.008/0.011/0.013 and LR 0.010/0.015/0.017 (~5-6x persistence). The
+required benchmark is met. Absolute numbers are low because **onset examples are scarce** (~33 clean
+"attack-in-next-window" training positives): in CIC-IDS2017, per-host attackers have little benign
+precursor. Main lever for higher absolute performance is **more onset examples** (more datasets /
+finer entity granularity / wider pre-attack labelling), not more hyperparameter tuning. Focal loss
+(`--risk-loss focal`) and windows caching are wired and ready. Checkpoints in models/wm_onset_v3/.
+
+**CTU-13 loader PREPPED (2026-09-15, awaiting full data).** `loaders.load_ctu13` + `CTU13_COLUMN_MAP`
++ `stage_mapping.ctu13_family` are written for the ORIGINAL Stratosphere `.binetflow`
+(StartTime/SrcAddr/DstAddr/Sport/Dport). Verified: label mapping (Botnet->C2, Normal/Background->
+BENIGN) works, and the loader **rejects the stripped Kaggle parquet with a clear message**. When the
+full data lands under data/raw/CTU-13/, it flows load->unify->label->window (Dur seconds->µs handled;
+flag/IAT/pkt-len features unavailable -> filled 0; fan-out/ports/rate/entropy work). Untested against
+real full data (none on disk yet).
+
+**Dead-ends recorded (don't repeat):**
+- **Host-pair granularity (src>dst) FAILED** for onset (4 train / 0 test positives). A pair has no
+  benign history before the attack (it appears *at* the attack), so there are almost no benign->attack
+  transitions to learn. Per-host (src_ip) is correct — a host exists and behaves benignly before it
+  attacks. Best model stays the per-host v3 (beats persistence + LR).
+- **CTU-13 (dhoogla Kaggle parquet) unusable** for the temporal model: stripped of timestamp, IPs and
+  ports (flat-ML variant). Full `.binetflow` from Stratosphere IPS (stratosphereips.org/datasets-ctu13)
+  would work; needs a fresh download.
+
+**H. CIC-IDS2018 now included (user request).** Most 2018 days are IP-stripped, but the 3.9 GB
+`Thuesday-20-02` day carries Source IP, so it joins per-host training via `--add-2018` (streamed with
+a row cap to avoid OOM). Adds DDoS onset examples. The IP-less 2018 days remain whole-network-only
+(future experiment).
+
+### Still open (have a working default, not blocking the next step)
 
 **C. The 7-day baseline is impossible on the primary datasets.** `new_peer_count` ("not seen in last
 7 days") and `baseline_deviation` ("per-host 7-day baseline") both assume ≥7 days of history.
@@ -267,3 +358,27 @@ head matters for the demo, masking otherwise. Needs a decision.
 - Type hints required on every public function.
 - Scaffold state: every module has its docstring, signatures and TODOs; bodies raise
   `NotImplementedError`. Tests are `@pytest.mark.skip`-ed until their module lands.
+
+---
+
+## 13. Dataset landmines (from the research docs — verify before trusting labels)
+
+- **CIC-IDS2018 has documented label errors** (DistriNet / KU Leuven analysis, cited in M3 §9). Some
+  traffic labelled brute-force actually reached a **closed** service — a failed TCP connection, not a
+  credential attempt. Audit the `SSH-Bruteforce` / `FTP-BruteForce` labels before believing them.
+- **CTU-13's full PCAP is not public** (privacy; M3 §9). Only botnet-only PCAPs + labelled
+  bidirectional flows are available. So packet-level features on CTU-13 are partial — expect to run
+  the flow-only path there.
+- **Lab-schedule shortcuts** (M3 §15): attack days/times and fixed attacker IPs make the clock and
+  the address near-perfect predictors *in the lab* that transfer to nothing. Keep IPs, dates,
+  capture IDs out of model inputs (already enforced by `unified_schema.LEAK_COLUMNS`).
+
+## 14. Two-stage training plan (from Member 4 research)
+
+1. **Self-supervised pretrain** on benign traffic only — state head + Gaussian NLL, learns "what does
+   normal look like next?" No attack labels. Exploits the large benign majority of the data.
+2. **Supervised fine-tune** on labelled traffic — add risk + stage heads, scheduled sampling
+   0.0 → 0.9, curriculum K=1 → 2 → 4.
+   Plus: **high state-prediction error + high MC-dropout variance = unseen-attack signal**, reported
+   independently of the risk head (Member 4 §6.3). This is the main generalisation argument for the
+   held-out attack family.

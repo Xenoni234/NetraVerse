@@ -31,7 +31,7 @@ data:
 # ---- LOCKED in DESIGN.md section 3. Do not tune these per-config. ----
 windowing:
   window_seconds: 30
-  stride_seconds: 10
+  stride_seconds: 30             # disjoint 30s windows (research docs; K=1,2,4 -> 30/60/120s)
   history_length: 10              # L
   horizons: [1, 2, 4]             # K
   min_windows_per_entity: 14      # L + max(K)
@@ -98,3 +98,16 @@ logging:
   level: INFO
   log_every_n_steps: 20
   tensorboard: false
+
+# ---- Flow-level LR baseline (scripts/train_baseline_lr.py) ----------------
+# Pipeline smoke test + classical-ML DETECTION bar. NOT the forecasting
+# baseline: lead time is structurally 0 for a completed-flow classifier.
+baseline_lr:
+  days: [wed-14-02, thu-15-02, fri-02-03]   # brute force / DoS / Bot
+  max_rows_per_day: 400000                  # dev cap; null = all rows
+  drop_dst_port: true                       # near-label in CIC-IDS2018
+  C: 1.0
+  max_iter: 2000
+  class_weight: balanced
+  threshold: null                           # null -> selected on val by F1
+  results_path: results/lr_baseline.json
