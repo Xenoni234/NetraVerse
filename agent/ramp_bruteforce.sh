@@ -22,9 +22,9 @@ WINDOWS=${WINDOWS:-10}
 PAR=${PAR:-4}
 log(){ echo "[$(date -u +%H:%M:%S) UTC] $*"; }
 
-log "BENIGN runway ${BENIGN}s"
+log "BENIGN runway ${BENIGN}s (gentle: ~1 connect / 4s so the model stays quiet)"
 end=$(( $(date +%s) + BENIGN ))
-while [ "$(date +%s)" -lt "$end" ]; do curl -s -m 2 "telnet://$SERVER:$PORT" >/dev/null 2>&1; sleep 2; done
+while [ "$(date +%s)" -lt "$end" ]; do curl -s -m 2 "telnet://$SERVER:$PORT" >/dev/null 2>&1; sleep 4; done
 
 log "RAMP start: +${STEP} conns/window x ${WINDOWS} windows to :${PORT}"
 for w in $(seq 1 "$WINDOWS"); do

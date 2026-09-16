@@ -16,8 +16,9 @@ INTERVAL=${INTERVAL:-3}
 mkdir -p "$(dirname "$LOCAL")"
 echo "[sync] $SERVER:~/$REMOTE -> $LOCAL every ${INTERVAL}s (Ctrl-C to stop)"
 while true; do
-  if scp -q -o BatchMode=yes -o ConnectTimeout=5 "$SERVER:$REMOTE" "$LOCAL.tmp" 2>/dev/null; then
+  if scp -q -o BatchMode=yes -o ConnectTimeout=5 "$SERVER:$REMOTE" "$LOCAL.tmp" 2>/dev/null && [ -s "$LOCAL.tmp" ]; then
     mv -f "$LOCAL.tmp" "$LOCAL"
   fi
+  rm -f "$LOCAL.tmp" 2>/dev/null
   sleep "$INTERVAL"
 done
