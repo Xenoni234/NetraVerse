@@ -156,6 +156,17 @@ def _split_within_campaigns(df: pd.DataFrame, cfg: SplitConfig) -> dict[str, pd.
             cut_val = _snap_to_episode_edge(labels, cut_val)
             cut_val = max(cut_val, cut_train)
 
+        # A clock instant belongs to exactly one partition, even across hosts.
+        times = pd.to_datetime(group[cfg.time_col], utc=True)
+        for which in ('train', 'val'):
+            cut = cut_train if which == 'train' else cut_val
+            while 0 < cut < n and times.iloc[cut] == times.iloc[cut-1]:
+                cut += 1
+            if which == 'train':
+                cut_train = cut
+            else:
+                cut_val = max(cut, cut_train)
+
         parts["train"].append(group.iloc[:cut_train])
         parts["val"].append(group.iloc[cut_train:cut_val])
         parts["test"].append(group.iloc[cut_val:])

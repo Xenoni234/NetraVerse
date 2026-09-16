@@ -125,6 +125,8 @@ class WindowConfig:
     rollout_steps: int = ROLLOUT_STEPS
     min_windows_per_entity: int = MIN_WINDOWS_PER_ENTITY
     entity_granularity: str = "src_ip"   # src_ip | src_dst_pair
+    history_policy: str = "strict"  # strict | masked (future targets always observed)
+    min_observed_history: int = 3
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,7 @@ class SequenceBatch:
     y_stage: np.ndarray
     meta: pd.DataFrame
     feature_names: tuple[str, ...] = MODEL_COLUMNS
+    future: np.ndarray | None = None  # every rollout step, for exact teacher forcing
 
     @property
     def n_features(self) -> int:
@@ -220,6 +223,8 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
     """
     cfg = config or WindowConfig()
     df = flows.copy()
+    if 'dataset' not in df:
+        df['dataset'] = 'unknown'
 
     df["entity_id"] = entity_key(df, cfg.entity_granularity)
 
@@ -284,16 +289,18 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
         n_distinct_dst_port=("dst_port", "nunique"),
         off_hours_ratio=("_off_hours", "mean"),
         binary_label=("binary_label", "max"),          # attack if any flow is
-        attt_stage=("attt_stage", _window_stage),
+        attt_stage=("attt_stage", "max"),
+        dataset=("dataset", "first"),
         label_flows_attack=("binary_label", "sum"),
     )
 
     # Entropies (need the raw arrays per group).
-    ent = g.agg(
-        dst_port_entropy=("dst_port", lambda s: _shannon_entropy(s.to_numpy())),
-        dst_ip_entropy=("dst_ip", lambda s: _shannon_entropy(s.to_numpy())),
-    )
-    windows = agg.join(ent).reset_index()
+    for source, name in (("dst_port", "dst_port_entropy"), ("dst_ip", "dst_ip_entropy")):
+        counts = df.groupby(gkeys + [source], sort=False, observed=True).size()
+        probabilities = counts / counts.groupby(level=[0, 1, 2]).transform("sum")
+        entropy = (-probabilities * np.log2(probabilities)).groupby(level=[0, 1, 2]).sum()
+        agg[name] = entropy.reindex(agg.index).fillna(0)
+    windows = agg.reset_index()
 
     # new_peer_count (vectorised): count destination IPs whose FIRST appearance for
     # this host is in this window -> genuine "never-contacted-before" peers. This is
@@ -323,7 +330,6 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
     windows["mean_bwd_iat_s"] = windows.pop("mean_bwd_iat_us") / _US_PER_S
     windows["active_s"] = windows.pop("mean_active_us") / _US_PER_S
     windows["idle_s"] = windows.pop("mean_idle_us") / _US_PER_S
-    windows["dataset"] = df["dataset"].iloc[0] if "dataset" in df.columns else "unknown"
 
     # Behavioural, history-dependent features (per host, in time order) + masks.
     windows = _add_behavioural_features(windows, cfg)
@@ -362,49 +368,27 @@ def _add_behavioural_features(windows: pd.DataFrame, cfg: WindowConfig) -> pd.Da
         ["campaign_id", "entity_id", "window_start"], kind="mergesort"
     ).reset_index(drop=True)
 
-    base_dev = np.zeros(len(windows), dtype="float32")
-    traj = np.zeros(len(windows), dtype="float32")
-    m_new = np.zeros(len(windows), dtype="float32")
-    m_base = np.zeros(len(windows), dtype="float32")
-    m_traj = np.zeros(len(windows), dtype="float32")
-
-    # The ramp diagnostic showed the real pre-attack signal lives in port-entropy
-    # climb, fan-out and flow-rate — so the derived behavioural features target
-    # those (not bytes/s, which was flat before onset).
-    for _, idx in windows.groupby(["campaign_id", "entity_id"], sort=False).groups.items():
-        rows = np.asarray(idx)
-        if rows.size == 0:
-            continue
-        fps = windows.loc[rows, "flows_per_sec"].to_numpy(dtype="float64")
-        ent = windows.loc[rows, "dst_port_entropy"].to_numpy(dtype="float64")
-
-        # new_peer_count already computed vectorised in build_windows; set its mask.
-        if rows.size > 1:
-            m_new[rows[1:]] = 1.0
-
-        # trajectory_velocity: backward difference of dst_port_entropy (the ramp).
-        if rows.size > 1:
-            traj[rows] = np.diff(ent, prepend=ent[0]).astype("float32")
-            m_traj[rows[1:]] = 1.0
-
-        # baseline_deviation: robust z of flows_per_sec vs the host's trailing window.
-        for i in range(rows.size):
-            lo = max(0, i - _BASELINE_TRAILING_WINDOWS)
-            hist = fps[lo:i]
-            if hist.size >= _BASELINE_MIN_WINDOWS:
-                med = np.median(hist)
-                iqr = np.subtract(*np.percentile(hist, [75, 25]))
-                # Floor the scale so a near-constant history can't produce a huge z.
-                scale = max(iqr, float(np.std(hist)), 1e-3)
-                z = (fps[i] - med) / scale
-                base_dev[rows[i]] = np.float32(np.clip(z, -10.0, 10.0))
-                m_base[rows[i]] = 1.0
-
-    windows["baseline_deviation"] = base_dev
-    windows["trajectory_velocity"] = traj
-    windows["mask_new_peer_count"] = m_new
-    windows["mask_baseline_deviation"] = m_base
-    windows["mask_trajectory_velocity"] = m_traj
+    group = windows.groupby(["campaign_id", "entity_id"], sort=False)
+    position = group.cumcount().to_numpy()
+    fps = windows["flows_per_sec"].to_numpy(dtype="float64")
+    width = _BASELINE_TRAILING_WINDOWS
+    # Each row contains strictly PRIOR observations. Mask other hosts/campaigns.
+    history = np.lib.stride_tricks.sliding_window_view(
+        np.pad(fps, (width, 0), constant_values=np.nan), width)[:len(fps)].copy()
+    history[np.arange(width)[None, :] < (width - position[:, None])] = np.nan
+    valid = position >= _BASELINE_MIN_WINDOWS
+    baseline = np.zeros(len(windows), dtype="float32")
+    if valid.any():
+        hist = history[valid]
+        median = np.nanmedian(hist, axis=1)
+        q25, q75 = np.nanpercentile(hist, [25, 75], axis=1)
+        scale = np.maximum.reduce([q75-q25, np.nanstd(hist, axis=1), np.full(valid.sum(), 1e-3)])
+        baseline[valid] = np.clip((fps[valid]-median)/scale, -10, 10)
+    windows["baseline_deviation"] = baseline
+    windows["trajectory_velocity"] = group["dst_port_entropy"].diff().fillna(0).astype("float32")
+    windows["mask_new_peer_count"] = (position > 0).astype("float32")
+    windows["mask_baseline_deviation"] = valid.astype("float32")
+    windows["mask_trajectory_velocity"] = (position > 0).astype("float32")
     return windows
 
 
@@ -422,8 +406,8 @@ def build_sequences(
 ) -> SequenceBatch:
     """Turn per-host snapshots into ``(N, L, F)`` supervised samples.
 
-    Slides over each host's **consecutive observed snapshots** (silent gaps
-    skipped, not zero-filled). Never crosses an entity/campaign boundary.
+    Slides over consecutive clock-time snapshots; samples spanning silent gaps
+    are excluded. Never crosses an entity/campaign boundary.
 
     Target modes (``target=``):
         ``"onset"`` (default, the PS objective) — forecast the **onset** of an
@@ -441,13 +425,15 @@ def build_sequences(
     onset sample) — the persistence baseline's prediction.
     """
     cfg = config or WindowConfig()
+    if cfg.history_policy == "masked":
+        return _masked_history_sequences(windows, cfg, target, exclude_ongoing)
     L, ksteps = cfg.history_length, cfg.rollout_steps
     horizons = np.asarray(cfg.horizons)
     feat = list(MODEL_COLUMNS)
     if target not in ("onset", "ongoing"):
         raise ValueError(f"target must be 'onset' or 'ongoing', got {target!r}")
 
-    xs, ys, yr, ystg, meta_rows = [], [], [], [], []
+    xs, ys, yr, ystg, meta_rows, futures = [], [], [], [], [], []
     for (campaign, entity), grp in windows.groupby(["campaign_id", "entity_id"], sort=True):
         grp = grp.sort_values("window_start", kind="mergesort")
         n = len(grp)
@@ -457,6 +443,8 @@ def build_sequences(
         risk = grp["binary_label"].to_numpy(dtype="float32")
         stage = grp["attt_stage"].to_numpy(dtype="int64")
         starts = grp["window_start"].to_numpy()
+        ticks = pd.to_datetime(grp["window_start"], utc=True).astype("datetime64[ns, UTC]").astype("int64").to_numpy()
+        breaks = np.r_[0, np.cumsum(np.diff(ticks) != cfg.stride_seconds * 1_000_000_000)]
 
         # Windows until the next attack, over consecutive rows (trailing-safe).
         attack_pos = np.flatnonzero(risk > 0.5)
@@ -468,6 +456,8 @@ def build_sequences(
 
         last_origin = n - ksteps
         for t in range(L - 1, last_origin):
+            if breaks[t + ksteps] != breaks[t - L + 1]:
+                continue
             if target == "onset":
                 if exclude_ongoing and risk[t] > 0.5:
                     continue                                   # forecast for benign hosts
@@ -486,6 +476,7 @@ def build_sequences(
 
             xs.append(fmat[t - L + 1 : t + 1])                 # (L, F)
             ys.append(fmat[t + horizons])                       # (|K|, F) future state
+            futures.append(fmat[t + 1:t + ksteps + 1])
             yr.append(y)
             ystg.append(stg)
             meta_rows.append((entity, campaign, starts[t], float(risk[t]), int(stage[t])))
@@ -501,8 +492,60 @@ def build_sequences(
                                           "origin_risk", "origin_stage"])
     return SequenceBatch(
         x=np.stack(xs), y_state=np.stack(ys), y_risk=np.stack(yr),
-        y_stage=np.stack(ystg), meta=meta, feature_names=tuple(feat),
+        y_stage=np.stack(ystg), meta=meta, feature_names=tuple(feat), future=np.stack(futures),
     )
+
+
+def _masked_history_sequences(windows: pd.DataFrame, cfg: WindowConfig,
+                              target: str, exclude_ongoing: bool) -> SequenceBatch:
+    """Allow unknown HISTORICAL windows, never invent future labels or targets."""
+    if target not in ('onset', 'ongoing'):
+        raise ValueError(f'Unknown target {target}')
+    feat = tuple(MODEL_COLUMNS) + ('mask_observed',)
+    xs, ys, futures, risks, stages, metadata = [], [], [], [], [], []
+    step = cfg.stride_seconds * 1_000_000_000
+    for (campaign, entity), group in windows.groupby(['campaign_id','entity_id'],sort=True):
+        group = group.sort_values('window_start')
+        n = len(group)
+        if n < cfg.min_observed_history + cfg.rollout_steps:
+            continue
+        ticks = pd.to_datetime(group.window_start,utc=True).astype('datetime64[ns, UTC]').astype('int64').to_numpy()
+        values = group[list(MODEL_COLUMNS)].to_numpy(dtype='float32')
+        labels = group.binary_label.to_numpy()
+        stage = group.attt_stage.to_numpy()
+        for t in range(cfg.min_observed_history-1,n-cfg.rollout_steps):
+            if target == 'onset' and exclude_ongoing and labels[t] > .5:
+                continue
+            # Require every next step to be observed; missing future != benign.
+            if not np.array_equal(ticks[t+1:t+cfg.rollout_steps+1],ticks[t]+step*np.arange(1,cfg.rollout_steps+1)):
+                continue
+            wanted = ticks[t]-step*np.arange(cfg.history_length-1,-1,-1)
+            indices = np.searchsorted(ticks,wanted)
+            observed = ticks[np.minimum(indices,n-1)] == wanted
+            if observed.sum() < cfg.min_observed_history:
+                continue
+            history = np.zeros((cfg.history_length,len(feat)),dtype='float32')
+            history[observed,:-1] = values[indices[observed]]
+            history[observed,-1] = 1
+            future = np.c_[values[t+1:t+cfg.rollout_steps+1],np.ones(cfg.rollout_steps,dtype='float32')]
+            future_labels = labels[t+1:t+cfg.rollout_steps+1]
+            if target == 'onset':
+                positive = np.flatnonzero(future_labels > .5)
+                delay = int(positive[0])+1 if len(positive) else np.inf
+                y = np.array([delay <= k for k in cfg.horizons],dtype='float32')
+                st = stage[t+int(delay)] if np.isfinite(delay) else 0
+                stg = np.where(y,st,0).astype('int64')
+            else:
+                y = future_labels[np.array(cfg.horizons)-1].astype('float32')
+                stg = stage[t+np.array(cfg.horizons)]
+            xs.append(history); futures.append(future)
+            ys.append(future[np.array(cfg.horizons)-1]); risks.append(y); stages.append(stg)
+            metadata.append((entity,campaign,group.window_start.iloc[t],float(labels[t]),int(stage[t])))
+    if not xs:
+        raise ValueError('No sequences with observed future targets')
+    return SequenceBatch(np.stack(xs),np.stack(ys),np.stack(risks),np.stack(stages),
+                         pd.DataFrame(metadata,columns=['entity_id','campaign_id','window_start','origin_risk','origin_stage']),
+                         feat,np.stack(futures))
 
 
 # --------------------------------------------------------------------------- #
@@ -519,11 +562,13 @@ def fit_scaler(x: np.ndarray, method: str = "robust", *, mask_tail: int = len(MA
     flat = x.reshape(-1, x.shape[-1]).astype("float64")
     f = flat.shape[1]
     n_feat = f - mask_tail
+    if method == "signed_log":
+        flat[:, :n_feat] = np.sign(flat[:, :n_feat]) * np.log1p(np.abs(flat[:, :n_feat]))
     if method == "robust":
         center = np.median(flat[:, :n_feat], axis=0)
         q75, q25 = np.percentile(flat[:, :n_feat], [75, 25], axis=0)
         scale = q75 - q25
-    elif method == "standard":
+    elif method in ("standard", "signed_log"):
         center = flat[:, :n_feat].mean(axis=0)
         scale = flat[:, :n_feat].std(axis=0)
     else:
@@ -539,6 +584,8 @@ def apply_scaler(x: np.ndarray, state: dict) -> np.ndarray:
     n = state["n_feat"]
     center = state["center"].astype("float32")
     scale = state["scale"].astype("float32")
+    if state["method"] == "signed_log":
+        out[..., :n] = np.sign(out[..., :n]) * np.log1p(np.abs(out[..., :n]))
     out[..., :n] = (out[..., :n] - center) / scale
     return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype("float32")
 
@@ -555,6 +602,7 @@ def save_sequences(batch: SequenceBatch, path: Path) -> Path:
     np.savez_compressed(
         path, x=batch.x, y_state=batch.y_state, y_risk=batch.y_risk,
         y_stage=batch.y_stage, feature_names=np.array(batch.feature_names),
+        **({"future": batch.future} if batch.future is not None else {}),
     )
     batch.meta.to_parquet(path.with_suffix(".meta.parquet"), index=False)
     return path
@@ -569,6 +617,7 @@ def load_sequences(path: Path) -> SequenceBatch:
     return SequenceBatch(
         x=d["x"], y_state=d["y_state"], y_risk=d["y_risk"], y_stage=d["y_stage"],
         meta=meta, feature_names=tuple(str(s) for s in d["feature_names"]),
+        future=d["future"] if "future" in d else None,
     )
 
 

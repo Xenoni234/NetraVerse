@@ -352,6 +352,34 @@ head matters for the demo, masking otherwise. Needs a decision.
 
 ## 11. Working agreements
 
+### Forecast correctness revision (2026-09-16)
+
+**Pipeline repair follow-up:** CIC-IDS2017 WorkingHours timestamps omit PM; the
+dataset-specific parser now shifts ambiguous 1..7 to 13..19. The 288,602 rejected
+Thursday morning records were fully empty CSV rows, not recoverable traffic.
+The optional `masked` history policy adds `mask_observed` and requires at least
+three observed history windows, an observed origin and all four observed future
+targets. Unknown future labels are never imputed. This supersedes the strict-only
+history policy for `configs/repaired.yaml`, not for legacy checkpoints. The
+30-second clock and 10-window history remain fixed. `scripts/repair_data_pipeline.py`
+and `scripts/train_repaired_model.py` reproduce the new experiment; see
+`reports/pipeline_repair_results.md`. Legacy checkpoint training used incorrect
+clock ordering, so its scores on newly partitioned data are not independent.
+No synthetic data was added. Keep `wm_final` and the repaired checkpoint separate.
+
+The improvement experiment uses strict consecutive 30-second histories and targets.
+Previous sequence building skipped silent gaps, so historical horizon scores are
+not directly comparable to corrected scores. Do not fill absent labels as benign.
+Exact four-step future states are retained for teacher forcing; the new experiment
+trains autonomous rollouts to avoid using future attack states to predict onset.
+Signed-log standard scaling is fitted on training data only. Benign-only pretraining,
+training-negative subsampling, and three loss settings are specified in the
+`improvement` block of `configs/train.yaml`, run with `scripts/improve_world_model.py`.
+Validation selects the candidate/epoch and per-horizon thresholds. Test is used only
+after selection. This is a development comparison on an already inspected dataset,
+not independent evidence of unseen-attack generalisation. Preserve `wm_final`.
+The fixed 30-second stride, 10-window history, and decoder risk heads remain in use.
+
 - **Do NOT** tell me to edit env files, run git commits, or execute terminal commands — I do those
   manually.
 - **End every response** with a `## Commands for me to run` section listing exactly what to paste

@@ -144,6 +144,10 @@ def load_cicids2017(
             print(f"  [loader] reading {path.name} ({path.stat().st_size / 1e6:,.0f} MB)")
         for chunk in _read_csv_chunks(path, chunk_rows=chunk_rows, encoding="latin-1"):
             chunk.columns = [str(c).strip() for c in chunk.columns]  # 2017 has leading spaces
+            empty_rows = chunk.isna().all(axis=1)
+            if verbose and empty_rows.any():
+                print(f"  [loader] excluded {int(empty_rows.sum()):,} empty CSV records", flush=True)
+            chunk = chunk.loc[~empty_rows].copy()
             # CIC-IDS2017 ships a duplicate "Fwd Header Length" column; keep first.
             chunk = chunk.loc[:, ~pd.Index(chunk.columns).duplicated()]
             chunk, _ = _drop_repeated_headers(chunk)
@@ -160,7 +164,7 @@ def load_cicids2017(
     if max_rows is not None:
         df = df.iloc[:max_rows].copy()
 
-    df[TIMESTAMP_COLUMN] = _parse_timestamps(df[RAW_TIMESTAMP_COLUMN])
+    df[TIMESTAMP_COLUMN] = _parse_cic_working_hours(df[RAW_TIMESTAMP_COLUMN])
     n_bad = int(df[TIMESTAMP_COLUMN].isna().sum())
     if n_bad:
         df = df[df[TIMESTAMP_COLUMN].notna()].copy()
@@ -370,6 +374,21 @@ def _parse_timestamps(series: pd.Series) -> pd.Series:
     if getattr(parsed.dtype, "tz", None) is None:
         parsed = parsed.dt.tz_localize(CAPTURE_TZ, ambiguous="NaT", nonexistent="NaT")
     return parsed.dt.tz_convert("UTC")
+
+
+def _parse_cic_working_hours(series: pd.Series) -> pd.Series:
+    """Repair CIC-IDS2017's unmarked 12-hour working-day clock.
+
+    Source: https://www.unb.ca/cic/datasets/ids-2017.html (capture/attack timetable).
+    Local TrafficLabelling files omit AM/PM: 1..7 mean 13..19, not overnight.
+    Explicit AM/PM and 24-hour timestamps are preserved. This dataset-specific
+    policy must never be applied to arbitrary uploaded/live traffic.
+    """
+    parsed = _parse_timestamps(series)
+    explicit = series.astype('string').str.contains(r'(?i)\b[ap]m\b', regex=True, na=False)
+    legacy_format = series.astype('string').str.match(r'^\s*\d{1,2}/\d{1,2}/2017\s', na=False)
+    shift = parsed.dt.hour.between(1, 7) & ~explicit & legacy_format
+    return parsed + pd.to_timedelta(shift.astype(int) * 12, unit='h')
 
 
 # --------------------------------------------------------------------------- #

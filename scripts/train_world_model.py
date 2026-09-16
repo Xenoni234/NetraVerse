@@ -15,6 +15,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -93,12 +95,19 @@ def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, us
     many more benign->attack transitions, but fan-out features degenerate).
     Windows cached to data/processed/ so iteration skips the slow (~3 min) rebuild.
     """
-    from src.data.paths import PROCESSED_DIR
+    from src.data.paths import PROCESSED_DIR, RAW_DIR
 
     tag = (("all" if days == ["all"] else "-".join(days)) + ("_+2018" if add_2018 else "")
            + ("_+ctu13" if add_ctu13 else "")
            + ("_pair" if granularity == "src_dst_pair" else ""))
-    cache = PROCESSED_DIR / f"windows_cicids2017_{tag}.parquet"
+    sources = [(str(p.relative_to(RAW_DIR)), p.stat().st_size, p.stat().st_mtime_ns)
+               for p in sorted(RAW_DIR.rglob('*')) if p.is_file() and p.suffix in ('.csv', '.binetflow', '.parquet')]
+    identity = dict(pipeline='clock-repair-v2', schema=unified_schema.SCHEMA_VERSION,
+                    days=days, max_rows=max_rows, add_2018=add_2018, max_rows_2018=max_rows_2018,
+                    add_ctu13=add_ctu13, scenarios=list(ctu13_scenarios), max_rows_ctu13=max_rows_ctu13,
+                    granularity=granularity, sources=sources)
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12]
+    cache = PROCESSED_DIR / f"windows_cicids2017_{tag}_{digest}.parquet"
     if use_cache and cache.exists():
         windows = pd.read_parquet(cache)
         print(f"[data] loaded {len(windows):,} cached host-windows from {cache.name}")
@@ -134,6 +143,7 @@ def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, us
           f"| window attack rate {windows['binary_label'].mean():.2%}")
     cache.parent.mkdir(parents=True, exist_ok=True)
     windows.to_parquet(cache, index=False)
+    cache.with_suffix('.json').write_text(json.dumps(identity, indent=2), encoding='utf-8')
     print(f"[data] cached -> {cache.name}")
     return windows
 
@@ -156,6 +166,8 @@ def to_loader(batch: W.SequenceBatch, scaler, batch_size, shuffle):
         torch.from_numpy(y_state.astype("float32")),
         torch.from_numpy(batch.y_risk.astype("float32")),
         torch.from_numpy(batch.y_stage.astype("int64")),
+        torch.from_numpy(W.apply_scaler(batch.future, scaler)) if batch.future is not None
+        else torch.empty(len(x), 0, x.shape[-1]),
     )
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=False)
 
@@ -164,14 +176,11 @@ def run_epoch(model, loader, crit, opt, device, *, sampling_prob, state_size, tr
     model.train() if train else model.eval()
     total, n = 0.0, 0
     torch.set_grad_enabled(train)
-    for x, y_state, y_risk, y_stage in loader:
+    for x, y_state, y_risk, y_stage, future in loader:
         x = x.to(device); y_state = y_state.to(device)
         y_risk = y_risk.to(device); y_stage = y_stage.to(device)
-        targets_full = y_state  # (B, K, F) — but decoder needs per-step frames
-        # y_state holds the K future frames at horizons; for teacher forcing we
-        # need the first `rollout` steps. Reuse y_state's K frames as the teacher
-        # frames for the matching steps; steps not in K free-run.
-        out = model(x, targets=None if not train else _teacher_frames(y_state, model.config),
+        # Exact consecutive future frames; legacy caches without them free-run.
+        out = model(x, targets=future.to(device) if train and future.shape[1] else None,
                     sampling_prob=sampling_prob)
         tgt = {"state": y_state[..., :state_size], "risk": y_risk, "stage": y_stage}
         loss, parts = crit(out, tgt)
@@ -184,29 +193,11 @@ def run_epoch(model, loader, crit, opt, device, *, sampling_prob, state_size, tr
     return total / max(n, 1)
 
 
-def _teacher_frames(y_state, cfg):
-    """Expand the K horizon frames into `rollout_steps` teacher frames.
-
-    We only have ground-truth frames at the K horizons; for intermediate steps we
-    reuse the nearest available horizon frame as the teacher. Good enough for
-    scheduled sampling (the loss is still only scored at K).
-    """
-    b, k, f = y_state.shape
-    steps = cfg.rollout_steps
-    horizons = list(cfg.horizons)
-    frames = torch.zeros(b, steps, f, device=y_state.device, dtype=y_state.dtype)
-    for step in range(steps):
-        h = step + 1
-        j = min(range(k), key=lambda i: abs(horizons[i] - h))
-        frames[:, step, :] = y_state[:, j, :]
-    return frames
-
-
 @torch.no_grad()
 def predict_probs(model, loader, device):
     model.eval()
     probs, risks, stages, stage_true = [], [], [], []
-    for x, y_state, y_risk, y_stage in loader:
+    for x, y_state, y_risk, y_stage, future in loader:
         out = model.rollout(x.to(device))
         probs.append(torch.sigmoid(out["risk_logits"]).cpu().numpy())
         risks.append(y_risk.numpy())

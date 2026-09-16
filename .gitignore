@@ -32,6 +32,14 @@ dist/
 !models/
 !models/wm_final/
 !models/wm_final/best.ckpt
+/models/wm_improved/
+!/models/wm_repaired/
+/models/wm_repaired/*
+!/models/wm_repaired/best.ckpt
+!/models/wm_repaired/config.json
+!/models/wm_repaired/audit.json
+!/models/wm_repaired/experiments.json
+!/models/wm_repaired/metrics.json
 
 # Notebooks
 .ipynb_checkpoints/

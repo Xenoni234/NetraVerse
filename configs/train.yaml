@@ -26,7 +26,6 @@ data:
   entity_granularity: src_ip      # per-host snapshots (user decision 2026-09-15)
   # NOTE: CIC-IDS2018 is IP-stripped on 9/10 days -> whole-network only; separate experiment config.
   campaigns: null                 # null -> every campaign found
-  entity_granularity: src_ip
   max_rows_per_file: null
   cache_parquet: true
 
@@ -115,3 +114,25 @@ logging:
   level: INFO
   log_every_n_steps: 100
   tensorboard: true
+
+# Validation-selected improvement experiment; original wm_final is preserved.
+# Entry point: scripts/improve_world_model.py
+improvement:
+  seed: 1337
+  cache: data/processed/windows_cicids2017_all_+2018_+ctu13.parquet
+  baseline_checkpoint: models/wm_final/best.ckpt
+  output: models/wm_improved
+  cpu_threads: 4
+  batch_size: 256
+  hidden_size: 128
+  lr: 0.0003
+  negative_cap: 12000
+  pretrain_cap: 20000
+  pretrain_epochs: 2
+  epochs: 12
+  patience: 4
+  lr_max_iter: 1000
+  candidates:
+    - {name: balanced_dynamics, state_weight: 1.0, pos_weight: 10.0}
+    - {name: risk_focused, state_weight: 0.2, pos_weight: 10.0}
+    - {name: conservative, state_weight: 0.2, pos_weight: 3.0}

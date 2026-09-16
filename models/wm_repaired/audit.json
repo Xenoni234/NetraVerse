@@ -1,0 +1,29 @@
+{
+  "train": {
+    "samples": 12424,
+    "positives": [
+      146.0,
+      217.0,
+      274.0
+    ],
+    "observed_history_fraction": 0.8600048422813416
+  },
+  "val": {
+    "samples": 4019,
+    "positives": [
+      14.0,
+      27.0,
+      45.0
+    ],
+    "observed_history_fraction": 0.8552625179290771
+  },
+  "test": {
+    "samples": 3702,
+    "positives": [
+      6.0,
+      10.0,
+      16.0
+    ],
+    "observed_history_fraction": 0.8257158398628235
+  }
+}

@@ -34,6 +34,13 @@ class Forecaster:
     device: torch.device
     stride_seconds: int = W.STRIDE_SECONDS
     history_length: int = W.HISTORY_LENGTH
+    thresholds: list[float] | None = None
+    sequence_policy: str = "strict_30s"
+    min_observed_history: int = 3
+
+    def threshold_for_horizon(self, horizon: int) -> float:
+        """Use the validation-selected cutoff for this forecast horizon."""
+        return float(self.thresholds[self.horizons.index(horizon)]) if self.thresholds else self.threshold
 
     # -- core forecast ------------------------------------------------------- #
 
@@ -57,7 +64,7 @@ class Forecaster:
         if mc_samples and mc_samples > 0:
             self.model.enable_mc_dropout()
             samples = np.stack([
-                torch.sigmoid(self.model.rollout(xt)["risk_logits"]).cpu().numpy()
+                torch.sigmoid(self.model(xt)["risk_logits"]).cpu().numpy()
                 for _ in range(mc_samples)
             ])  # (T, N, K)
             self.model.eval()
@@ -77,13 +84,20 @@ class Forecaster:
         window start — everything the dashboard needs to draw the risk timeline.
         """
         g = host_windows.sort_values("window_start").reset_index(drop=True)
+        if self.sequence_policy == 'masked_history_30s':
+            return self._forecast_masked_timeline(g,mc_samples=mc_samples)
         feat = [c for c in self.feature_names if c in g.columns]
         fmat = g[feat].to_numpy(dtype="float32")
         n, L = len(g), self.history_length
-        if n <= L:
+        if n < L:
             return pd.DataFrame()
 
         origins = np.arange(L - 1, n)
+        times = pd.to_datetime(g["window_start"], utc=True).astype("datetime64[ns, UTC]").astype("int64").to_numpy()
+        breaks = np.r_[0, np.cumsum(np.diff(times) != self.stride_seconds * 1_000_000_000)]
+        origins = origins[breaks[origins] == breaks[origins - L + 1]]
+        if not len(origins):
+            return pd.DataFrame()
         X = np.stack([fmat[t - L + 1 : t + 1] for t in origins])  # (M, L, F)
         out = self.forecast_batch(X, mc_samples=mc_samples)
 
@@ -97,6 +111,33 @@ class Forecaster:
             if "risk_lo" in out:
                 rows[f"risk_lo_k{k}"] = out["risk_lo"][:, i]
                 rows[f"risk_hi_k{k}"] = out["risk_hi"][:, i]
+        return rows
+
+    def _forecast_masked_timeline(self, g: pd.DataFrame, *, mc_samples: int = 0) -> pd.DataFrame:
+        """Use the same missing-history representation as repaired training."""
+        if g.empty:
+            return pd.DataFrame()
+        base = [c for c in self.feature_names if c != 'mask_observed']
+        observed = g.set_index('window_start')[base]
+        xs, origins = [], []
+        for t in range(len(g)):
+            wanted = pd.date_range(end=g.window_start.iloc[t],periods=self.history_length,
+                                   freq=f'{self.stride_seconds}s')
+            available = wanted.isin(observed.index)
+            if available.sum() < self.min_observed_history:
+                continue
+            frame = observed.reindex(wanted).fillna(0).to_numpy(dtype='float32')
+            xs.append(np.c_[frame,available.astype('float32')]); origins.append(t)
+        if not xs:
+            return pd.DataFrame()
+        out = self.forecast_batch(np.stack(xs),mc_samples=mc_samples)
+        rows = pd.DataFrame({'window_start':g.window_start.iloc[origins].to_numpy(),
+                             'true_label':g.binary_label.iloc[origins].to_numpy() if 'binary_label' in g else 0})
+        for i,k in enumerate(self.horizons):
+            rows[f'risk_k{k}'] = out['risk'][:,i]
+            rows[f'stage_k{k}'] = out['stage'][:,i]
+            if 'risk_lo' in out:
+                rows[f'risk_lo_k{k}'], rows[f'risk_hi_k{k}'] = out['risk_lo'][:,i],out['risk_hi'][:,i]
         return rows
 
 
@@ -116,6 +157,10 @@ def load_forecaster(ckpt_path: Path | str, *, device: str = "auto") -> Forecaste
         threshold=float(payload.get("threshold", 0.5)),
         horizons=list(payload.get("horizons", W.HORIZONS)),
         device=dev,
+        history_length=int(payload.get("history_length", W.HISTORY_LENGTH)),
+        thresholds=payload.get("thresholds"),
+        sequence_policy=payload.get('sequence_policy','strict_30s'),
+        min_observed_history=int(payload.get('min_observed_history',3)),
     )
 
 
@@ -134,16 +179,36 @@ def lead_time_seconds(
     """
     risk = timeline[horizon_key].to_numpy()
     over = risk >= threshold
+    true = timeline["true_label"].to_numpy().astype(bool)
+    if not true.any():
+        return None
+    attack_idx = int(np.argmax(true))
+    try:
+        horizon_steps = int(horizon_key.rsplit('k',1)[1])
+    except (IndexError, ValueError):
+        horizon_steps = None
     alert_idx = None
+    times = pd.to_datetime(timeline['window_start'], utc=True) if 'window_start' in timeline else None
     for i in range(len(over) - sustain + 1):
         if over[i : i + sustain].all():
-            alert_idx = i
+            if times is not None and sustain > 1:
+                differences = times.iloc[i:i+sustain].diff().dropna().dt.total_seconds()
+                if not (differences == stride_seconds).all():
+                    continue
+            # A sustained alert is available only when its last window closes.
+            candidate = i + sustain - 1
+            lead = ((times.iloc[attack_idx]-times.iloc[candidate]).total_seconds()-stride_seconds
+                    if times is not None else (attack_idx-candidate-1)*stride_seconds)
+            if horizon_steps is not None and lead > (horizon_steps-1)*stride_seconds:
+                continue  # an unrelated, much earlier false alarm is not warning lead
+            alert_idx = candidate
             break
-    true = timeline["true_label"].to_numpy().astype(bool)
     if alert_idx is None or not true.any():
         return None
     attack_idx = int(np.argmax(true))
-    return float((attack_idx - alert_idx) * stride_seconds)
+    if times is not None:
+        return float((times.iloc[attack_idx] - times.iloc[alert_idx]).total_seconds() - stride_seconds)
+    return float((attack_idx - alert_idx - 1) * stride_seconds)
 
 
 # --------------------------------------------------------------------------- #

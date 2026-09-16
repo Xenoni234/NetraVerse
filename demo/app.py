@@ -315,7 +315,7 @@ def main() -> None:
 
     fc = get_forecaster(ckpt)
     win = get_windows(wpath)
-    thr = st.sidebar.slider("Alert threshold", 0.0, 1.0, float(fc.threshold), 0.005)
+    thr = st.sidebar.slider("Alert threshold", 0.0, 1.0, fc.threshold_for_horizon(horizon), 0.005)
 
     # host picker — default to hosts that have an attack (interesting to watch)
     counts = win.groupby(["campaign_id", "entity_id"]).agg(

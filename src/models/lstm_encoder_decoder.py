@@ -36,6 +36,9 @@ class WorldModelConfig:
     rollout_steps: int = 4
     n_stages: int = 7
     use_attention: bool = True   # temporal attention over encoder states (explainability)
+    residual_state: bool = False
+    temporal_deltas: bool = False
+    cumulative_risk: bool = False
 
     @property
     def n_mask(self) -> int:
@@ -50,7 +53,7 @@ class WorldModel(nn.Module):
         self.config = config
         drop = config.dropout if config.num_layers > 1 else 0.0
         self.encoder = nn.LSTM(
-            config.input_size, config.hidden_size, config.num_layers,
+            config.input_size * (2 if config.temporal_deltas else 1), config.hidden_size, config.num_layers,
             batch_first=True, dropout=drop,
         )
         self.decoder = nn.LSTM(
@@ -69,6 +72,11 @@ class WorldModel(nn.Module):
         self.state_head = StateHead(config.hidden_size, config.state_size, dropout=config.dropout)
         self.risk_head = RiskHead(config.hidden_size, dropout=config.dropout)
         self.stage_head = StageHead(config.hidden_size, config.n_stages, dropout=config.dropout)
+        if config.residual_state:
+            nn.init.zeros_(self.state_head.mean.weight)
+            nn.init.zeros_(self.state_head.mean.bias)
+        if config.cumulative_risk:
+            nn.init.constant_(self.risk_head.net[-1].bias, -5.0)
 
     # -- construction helpers ------------------------------------------------ #
 
@@ -113,7 +121,11 @@ class WorldModel(nn.Module):
         """
         cfg = self.config
         steps = n_steps or cfg.rollout_steps
-        enc_out, (h, c) = self.encoder(x)      # enc_out (B, L, H) — per-window states
+        enc_input = x
+        if cfg.temporal_deltas:
+            delta = torch.cat([torch.zeros_like(x[:, :1]), x[:, 1:] - x[:, :-1]], dim=1)
+            enc_input = torch.cat([x, delta], dim=-1)
+        enc_out, (h, c) = self.encoder(enc_input)
 
         prev = x[:, -1, :]                     # (B, F) last observed frame
         free_run = (not self.training) or (targets is None)
@@ -122,6 +134,7 @@ class WorldModel(nn.Module):
         scale = cfg.hidden_size ** 0.5
 
         means, logvars, risks, stages, attns = [], [], [], [], []
+        log_survival = torch.zeros(x.size(0), device=x.device, dtype=x.dtype)
         for step in range(steps):
             out, (h, c) = self.decoder(prev.unsqueeze(1), (h, c))
             hidden = out[:, -1, :]             # (B, H)
@@ -133,9 +146,15 @@ class WorldModel(nn.Module):
                 hidden = torch.tanh(self.attn_combine(torch.cat([hidden, context], dim=-1)))
                 attns.append(weights)
             mean, logvar = self.state_head(hidden)
+            if cfg.residual_state:
+                mean = prev[:, :cfg.state_size] + mean
             means.append(mean)
             logvars.append(logvar)
-            risks.append(self.risk_head(hidden))
+            risk_logit = self.risk_head(hidden)
+            if cfg.cumulative_risk:
+                log_survival = log_survival + torch.nn.functional.logsigmoid(-risk_logit)
+                risk_logit = torch.log((-torch.expm1(log_survival)).clamp_min(1e-12)) - log_survival
+            risks.append(risk_logit)
             stages.append(self.stage_head(hidden))
 
             # Build the next decoder input.

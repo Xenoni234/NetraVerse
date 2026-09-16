@@ -77,11 +77,7 @@ def compute_all_metrics(
         y_true, y_pred, average="binary", zero_division=0
     )
 
-    tn, fp, fn, tp = (
-        confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-        if not single_class
-        else (n_neg, 0, 0, n_pos)
-    )
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
 
     results: dict[str, object] = {
         "precision": float(precision),
