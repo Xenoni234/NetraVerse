@@ -49,7 +49,7 @@ import pandas as pd
 from src.data.paths import DatasetName
 
 #: Bump on ANY change to the feature lists below.
-SCHEMA_VERSION: Final[str] = "1.1.0-cicids2018-baseline"
+SCHEMA_VERSION: Final[str] = "1.2.0-packet-derived"
 
 # --------------------------------------------------------------------------- #
 # Unified per-flow schema
@@ -89,6 +89,21 @@ FLOW_FEATURE_COLUMNS: Final[tuple[str, ...]] = (
     # packet shape (2)
     "pkt_len_mean",
     "pkt_len_std",
+    # packet-level, from the CSV's CICFlowMeter stats (9): packet shape per
+    # direction, TCP window size, directional inter-arrival timing, active/idle
+    # session timing. These expose the timing & sequencing the PS asks packet-level
+    # features to capture (slow-scan / beaconing shape). (Header-length and
+    # min-segment-size columns are dropped: CIC-IDS2017 ships them with a
+    # CICFlowMeter signed-overflow bug — negative/absurd values.)
+    "fwd_pkt_len_mean",
+    "bwd_pkt_len_mean",
+    "pkt_len_var",
+    "fwd_iat_mean",
+    "bwd_iat_mean",
+    "init_win_fwd",
+    "init_win_bwd",
+    "active_mean",
+    "idle_mean",
 )
 
 N_FLOW_FEATURES: Final[int] = len(FLOW_FEATURE_COLUMNS)
@@ -192,6 +207,16 @@ CICIDS2018_COLUMN_MAP: Final[Mapping[str, str]] = {
     # packet shape
     "Pkt Len Mean": "pkt_len_mean",
     "Pkt Len Std": "pkt_len_std",
+    # packet-level (CICFlowMeter v3 names)
+    "Fwd Pkt Len Mean": "fwd_pkt_len_mean",
+    "Bwd Pkt Len Mean": "bwd_pkt_len_mean",
+    "Pkt Len Var": "pkt_len_var",
+    "Fwd IAT Mean": "fwd_iat_mean",
+    "Bwd IAT Mean": "bwd_iat_mean",
+    "Init Fwd Win Byts": "init_win_fwd",
+    "Init Bwd Win Byts": "init_win_bwd",
+    "Active Mean": "active_mean",
+    "Idle Mean": "idle_mean",
 }
 
 #: CIC-IDS2017 (TrafficLabelling variant) source column name -> unified name.
@@ -233,6 +258,16 @@ CICIDS2017_COLUMN_MAP: Final[Mapping[str, str]] = {
     # packet shape
     "Packet Length Mean": "pkt_len_mean",
     "Packet Length Std": "pkt_len_std",
+    # packet-level (CICFlowMeter v2 / 2017 names)
+    "Fwd Packet Length Mean": "fwd_pkt_len_mean",
+    "Bwd Packet Length Mean": "bwd_pkt_len_mean",
+    "Packet Length Variance": "pkt_len_var",
+    "Fwd IAT Mean": "fwd_iat_mean",
+    "Bwd IAT Mean": "bwd_iat_mean",
+    "Init_Win_bytes_forward": "init_win_fwd",
+    "Init_Win_bytes_backward": "init_win_bwd",
+    "Active Mean": "active_mean",
+    "Idle Mean": "idle_mean",
 }
 
 #: CTU-13 (original Stratosphere binetflow) -> unified. The binetflow lacks

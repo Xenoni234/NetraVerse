@@ -73,6 +73,13 @@ STATE_FEATURE_COLUMNS: Final[tuple[str, ...]] = (
     "frac_tcp", "frac_udp", "frac_icmp",
     # shape / timing (4)
     "mean_flow_duration_s", "mean_iat_s", "mean_pkt_len", "fwd_bwd_ratio",
+    # packet-level aggregates from CSV CICFlowMeter stats (12): packet shape per
+    # direction, TCP window size, directional IAT timing, active/idle session
+    # timing, segment/header sizes — the timing & sequencing the PS wants.
+    "mean_fwd_pkt_len", "mean_bwd_pkt_len", "pkt_len_var",
+    "mean_fwd_iat_s", "mean_bwd_iat_s",
+    "mean_init_win_fwd", "mean_init_win_bwd",
+    "active_s", "idle_s",
     # fan-out / topology — the attacker-footprint signals (4)
     "n_distinct_dst_ip", "n_distinct_dst_port", "dst_port_entropy", "dst_ip_entropy",
     # behavioural / history-dependent (4)
@@ -263,6 +270,16 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
         mean_iat_us=("iat_mean", "mean"),
         mean_pkt_len=("pkt_len_mean", "mean"),
         fwd_bwd_ratio=("fwd_bwd_ratio", "mean"),
+        # packet-level aggregates (mean over the window's flows)
+        mean_fwd_pkt_len=("fwd_pkt_len_mean", "mean"),
+        mean_bwd_pkt_len=("bwd_pkt_len_mean", "mean"),
+        pkt_len_var=("pkt_len_var", "mean"),
+        mean_fwd_iat_us=("fwd_iat_mean", "mean"),
+        mean_bwd_iat_us=("bwd_iat_mean", "mean"),
+        mean_init_win_fwd=("init_win_fwd", "mean"),
+        mean_init_win_bwd=("init_win_bwd", "mean"),
+        mean_active_us=("active_mean", "mean"),
+        mean_idle_us=("idle_mean", "mean"),
         n_distinct_dst_ip=("dst_ip", "nunique"),
         n_distinct_dst_port=("dst_port", "nunique"),
         off_hours_ratio=("_off_hours", "mean"),
@@ -301,6 +318,11 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
     windows["bytes_per_sec"] = windows["bytes_total"] / w
     windows["mean_flow_duration_s"] = windows.pop("mean_flow_duration_us") / _US_PER_S
     windows["mean_iat_s"] = windows.pop("mean_iat_us") / _US_PER_S
+    # packet-level timing: microseconds -> seconds
+    windows["mean_fwd_iat_s"] = windows.pop("mean_fwd_iat_us") / _US_PER_S
+    windows["mean_bwd_iat_s"] = windows.pop("mean_bwd_iat_us") / _US_PER_S
+    windows["active_s"] = windows.pop("mean_active_us") / _US_PER_S
+    windows["idle_s"] = windows.pop("mean_idle_us") / _US_PER_S
     windows["dataset"] = df["dataset"].iloc[0] if "dataset" in df.columns else "unknown"
 
     # Behavioural, history-dependent features (per host, in time order) + masks.
