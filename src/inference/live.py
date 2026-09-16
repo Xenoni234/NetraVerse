@@ -81,7 +81,8 @@ def load_live_flows(path: Path | str, *, campaign_id: str = "live") -> pd.DataFr
 
     frames = []
     for f in files:
-        df = pd.read_csv(f, low_memory=False)
+        # on_bad_lines="skip": a live capture's last row may be mid-write
+        df = pd.read_csv(f, low_memory=False, on_bad_lines="skip")
         df.columns = [str(c).strip() for c in df.columns]
         df = df.loc[:, ~pd.Index(df.columns).duplicated()]
         frames.append(df)

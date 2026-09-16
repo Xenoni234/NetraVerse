@@ -29,6 +29,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.inference.baseline import BaselineThresholds, first_alert_index, signature_alerts
 from src.inference.engine import explain_window, lead_time_seconds, load_forecaster
 from src.inference.live import live_windows
 
@@ -38,6 +39,7 @@ DEFAULT_CKPT = REPO_ROOT / "models" / "wm_final" / "best.ckpt"
 DEFAULT_WINDOWS = REPO_ROOT / "data" / "processed" / "windows_cicids2017_all_+2018.parquet"
 DEFAULT_SERVER_CKPT = REPO_ROOT / "models" / "wm_server" / "best.ckpt"
 DEFAULT_LIVE_CSV = REPO_ROOT / "data" / "live" / "server_attack.csv"
+DEFAULT_REALTIME_CSV = REPO_ROOT / "data" / "live" / "live.csv"
 
 
 @st.cache_resource(show_spinner=False)
@@ -71,7 +73,8 @@ def contiguous_spans(mask: np.ndarray) -> list[tuple[int, int]]:
 
 
 def risk_timeline_figure(tl: pd.DataFrame, horizon: int, threshold: float,
-                         *, attack_start=None, autoscale: bool = False) -> go.Figure:
+                         *, attack_start=None, autoscale: bool = False,
+                         baseline_alert_time=None) -> go.Figure:
     x = pd.to_datetime(tl["window_start"])
     fig = go.Figure()
 
@@ -107,8 +110,13 @@ def risk_timeline_figure(tl: pd.DataFrame, horizon: int, threshold: float,
     for i in range(len(over) - 1):
         if over[i] and over[i + 1]:
             fig.add_vline(x=x.iloc[i], line=dict(color="#2e7d32", dash="dot"),
-                          annotation_text="first alert", annotation_position="bottom right")
+                          annotation_text="model alert", annotation_position="bottom right")
             break
+
+    # signature-baseline first alert (the "dumb IDS") — the gap is the lead time
+    if baseline_alert_time is not None:
+        fig.add_vline(x=pd.Timestamp(baseline_alert_time), line=dict(color="#6a1b9a", dash="dot"),
+                      annotation_text="baseline alert", annotation_position="top right")
 
     if autoscale:
         ymax = max(float(tl[f"risk_k{horizon}"].max()), threshold) * 1.35
@@ -122,68 +130,73 @@ def risk_timeline_figure(tl: pd.DataFrame, horizon: int, threshold: float,
     return fig
 
 
-def live_view(horizon: int, mc: bool) -> None:
-    """Live server capture: unlabelled CSV from cicflowmeter, server-calibrated model."""
-    with st.sidebar:
-        ckpt = st.text_input("Checkpoint", str(DEFAULT_SERVER_CKPT))
-        csv = st.text_input("Live capture CSV (cicflowmeter)", str(DEFAULT_LIVE_CSV))
-        launch = st.text_input("Attack launch time (server-local, blank if none)",
-                               "2026-09-16 02:52:52")
+def read_live_windows_fresh(path: str) -> pd.DataFrame:
+    """Uncached per-host windows for the growing live CSV (must re-read every tick)."""
+    win = live_windows(path, campaign_id="live")
+    win["window_start"] = pd.to_datetime(win["window_start"]).dt.tz_localize(None)
+    return win
 
-    if not Path(ckpt).exists():
-        st.error(f"Server checkpoint not found: {ckpt}. Run scripts/calibrate.py first.")
-        return
-    if not Path(csv).exists():
-        st.error(f"Live CSV not found: {csv}.")
-        return
 
-    fc = get_forecaster(ckpt)
-    win = get_live_windows(csv)
-    thr = st.sidebar.slider("Alert threshold", 0.0, 0.05, float(fc.threshold), 0.0002, format="%.4f")
-    attack_start = pd.Timestamp(launch) if launch.strip() else None
-
-    # pick the busiest host (the scanner has the most windows / fan-out)
+def render_live_forecast(fc, win: pd.DataFrame, *, horizon: int, thr: float, mc: bool,
+                         attack_start=None, baseline_thr: BaselineThresholds,
+                         host: str | None = None) -> None:
+    """Shared renderer for both live modes: forecast + signature baseline + lead time."""
     counts = win.groupby("entity_id").size().sort_values(ascending=False)
     hosts = list(counts.index)
     if not hosts:
-        st.warning("No hosts in this capture.")
+        st.info("No flows yet — waiting for the capture feed…")
         return
-    host = st.sidebar.selectbox("Host to inspect", hosts,
-                                format_func=lambda h: f"{h}  ({counts[h]} windows)")
+    if host is None or host not in hosts:
+        host = hosts[0]  # busiest host = the scanner
     hw = win[win.entity_id == host].sort_values("window_start")
 
-    with st.spinner("Forecasting…"):
-        tl = fc.forecast_host_timeline(hw, mc_samples=20 if mc else 0)
+    tl = fc.forecast_host_timeline(hw, mc_samples=20 if mc else 0)
     if tl.empty:
-        st.warning(f"Host {host} has ≤ {fc.history_length} windows — not enough history to forecast. "
-                   "Capture a longer benign runway before the attack.")
+        st.warning(f"Host {host} has ≤ {fc.history_length} windows — not enough history yet. "
+                   "Let the benign runway build up (5 min) before attacking.")
         return
     tl["window_start"] = pd.to_datetime(tl["window_start"]).dt.tz_localize(None)
 
-    # lead time vs the known launch time (live data is unlabelled)
+    # --- model first sustained alert (2 windows) ---
     rk = tl[f"risk_k{horizon}"].to_numpy()
     over = rk >= thr
-    alert_idx = next((i for i in range(len(over) - 1) if over[i] and over[i + 1]), None)
-    lead = None
-    if alert_idx is not None and attack_start is not None:
-        lead = (attack_start - tl["window_start"].iloc[alert_idx]).total_seconds()
+    model_i = next((i for i in range(len(over) - 1) if over[i] and over[i + 1]), None)
+    model_t = tl["window_start"].iloc[model_i] if model_i is not None else None
+
+    # --- signature baseline on the same (forecast) windows ---
+    sig = signature_alerts(hw, baseline_thr)
+    sig = sig[sig["window_start"].isin(tl["window_start"])]
+    bi = first_alert_index(sig["sig_alert"].to_numpy(), sustain=1)
+    base_t = sig["window_start"].iloc[bi] if bi is not None else None
+    base_reason = sig["sig_reason"].iloc[bi] if bi is not None else ""
+
+    # --- lead time = how much earlier the model warned than the dumb IDS ---
+    lead_vs_base = ((base_t - model_t).total_seconds()
+                    if (model_t is not None and base_t is not None) else None)
+    lead_vs_launch = ((attack_start - model_t).total_seconds()
+                      if (model_t is not None and attack_start is not None) else None)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Host (scanner)", str(host))
-    if alert_idx is None:
-        c2.metric("Alert", "none")
-    elif lead is None:
-        c2.metric("Alert", "fired")
+    c1.metric("Host", str(host))
+    if model_i is None:
+        c2.metric("Model", "no alert")
+    elif lead_vs_base is not None:
+        c2.metric("Lead vs signature IDS", f"{lead_vs_base:+.0f} s",
+                  help="positive = the world model warned this many seconds before the threshold IDS fired")
     else:
-        c2.metric("Detection vs onset", f"{lead:+.0f} s" if abs(lead) >= 1 else "at onset",
-                  help="positive = warned before launch; ~0 = detected within one window of onset")
-    c3.metric("Peak risk (scan)", f"{rk.max():.3f}")
+        c2.metric("Model", "ALERT (IDS silent)",
+                  help="model is warning while the signature IDS has not fired at all")
+    c3.metric("Peak risk", f"{rk.max():.3f}")
 
     st.plotly_chart(
-        risk_timeline_figure(tl, horizon, thr, attack_start=attack_start, autoscale=True),
+        risk_timeline_figure(tl, horizon, thr, attack_start=attack_start, autoscale=True,
+                             baseline_alert_time=base_t),
         width='stretch')
-    st.caption("Risk is autoscaled — absolute values are low on out-of-distribution live traffic "
-               "(data ceiling + lab→server shift); the **benign→scan separation and ramp** are the signal.")
+    cap = ("Risk is autoscaled — absolute values are low on out-of-distribution live traffic; the "
+           "**benign→attack separation, the ramp, and the gap to the baseline alert** are the signal.")
+    if lead_vs_launch is not None:
+        cap += f"  (vs recorded launch: {lead_vs_launch:+.0f} s)"
+    st.caption(cap)
 
     # explanation at the alert (or peak) window vs this host's benign baseline
     feat = [c for c in fc.feature_names if c in hw.columns]
@@ -191,22 +204,82 @@ def live_view(horizon: int, mc: bool) -> None:
         baseline = hw[hw["window_start"] < attack_start][feat].mean()
     else:
         baseline = hw[feat].median()
-    peak_ws = tl["window_start"].iloc[int(np.argmax(rk))]
-    cur_row = hw.iloc[(hw["window_start"] - peak_ws).abs().argmin()]
+    focus_t = model_t if model_t is not None else tl["window_start"].iloc[int(np.argmax(rk))]
+    cur_row = hw.iloc[(hw["window_start"] - focus_t).abs().argmin()]
     sentence, drivers = explain_window(cur_row, baseline, feat, top_k=4)
     st.subheader("Why the model is warning")
     st.info(sentence)
+    if base_t is not None:
+        st.caption(f"Signature IDS would fire at {base_t:%H:%M:%S} on: {base_reason}.")
     if drivers:
         st.table(pd.DataFrame(drivers, columns=["feature", "now", "normal"]))
 
-    with st.expander("What am I looking at?"):
-        st.markdown(
-            f"- **Blue line** = forecast probability this host is entering an attack, **+{horizon*30}s "
-            "ahead**, from live cicflowmeter features.\n"
-            "- **Red band** = when the scan was actually launched (operator-recorded).\n"
-            "- **Green dotted line** = first sustained alert. For an abrupt scan this lands within one "
-            "30 s window of onset; a slow/stealthy scan would push it earlier.\n"
-            "- Threshold is calibrated on this server's benign traffic (see scripts/calibrate.py).")
+
+def _baseline_controls() -> BaselineThresholds:
+    with st.sidebar:
+        st.markdown("**Signature baseline (the 'dumb IDS' we beat)**")
+        sp = st.slider("scan: distinct dst ports / 30 s", 5, 300, int(BaselineThresholds.scan_ports), 5)
+        cr = st.slider("brute-force: flows / sec (few ports)", 0.5, 10.0,
+                       float(BaselineThresholds.conn_rate), 0.5)
+    return BaselineThresholds(scan_ports=sp, conn_rate=cr)
+
+
+def live_realtime_view(horizon: int, mc: bool) -> None:
+    """Real-time: auto-refresh from the growing live.csv the sync loop writes."""
+    with st.sidebar:
+        ckpt = st.text_input("Checkpoint", str(DEFAULT_SERVER_CKPT))
+        csv = st.text_input("Live feed CSV (synced from server)", str(DEFAULT_REALTIME_CSV))
+        refresh = st.slider("Refresh every (s)", 2, 15, 3)
+    if not Path(ckpt).exists():
+        st.error(f"Server checkpoint not found: {ckpt}. Run scripts/calibrate.py first.")
+        return
+    fc = get_forecaster(ckpt)
+    thr = st.sidebar.slider("Alert threshold", 0.0, 0.05, float(fc.threshold), 0.0002, format="%.4f")
+    baseline_thr = _baseline_controls()
+
+    st.caption(f"🔴 LIVE — refreshing every {refresh}s from `{csv}`. "
+               "Launch an attack at the server's tailnet IP and watch the risk climb.")
+
+    @st.fragment(run_every=refresh)
+    def _tick() -> None:
+        stamp = pd.Timestamp.now().strftime("%H:%M:%S")
+        if not Path(csv).exists():
+            st.info(f"[{stamp}] waiting for the live feed at {csv} …")
+            return
+        try:
+            win = read_live_windows_fresh(csv)
+        except Exception as e:  # partial/empty CSV between writes
+            st.info(f"[{stamp}] feed not ready ({type(e).__name__}) — retrying…")
+            return
+        st.caption(f"updated {stamp} · {len(win)} host-windows")
+        render_live_forecast(fc, win, horizon=horizon, thr=thr, mc=mc,
+                             baseline_thr=baseline_thr)
+
+    _tick()
+
+
+def live_static_view(horizon: int, mc: bool) -> None:
+    """Static: inspect an already-captured CSV (the one-shot recording)."""
+    with st.sidebar:
+        ckpt = st.text_input("Checkpoint", str(DEFAULT_SERVER_CKPT))
+        csv = st.text_input("Capture CSV (cicflowmeter)", str(DEFAULT_LIVE_CSV))
+        launch = st.text_input("Attack launch time (server-local, blank if none)",
+                               "2026-09-16 02:52:52")
+    if not Path(ckpt).exists():
+        st.error(f"Server checkpoint not found: {ckpt}. Run scripts/calibrate.py first.")
+        return
+    if not Path(csv).exists():
+        st.error(f"Capture CSV not found: {csv}.")
+        return
+    fc = get_forecaster(ckpt)
+    win = get_live_windows(csv)
+    thr = st.sidebar.slider("Alert threshold", 0.0, 0.05, float(fc.threshold), 0.0002, format="%.4f")
+    baseline_thr = _baseline_controls()
+    attack_start = pd.Timestamp(launch) if launch.strip() else None
+    hosts = list(win.groupby("entity_id").size().sort_values(ascending=False).index)
+    host = st.sidebar.selectbox("Host to inspect", hosts) if hosts else None
+    render_live_forecast(fc, win, horizon=horizon, thr=thr, mc=mc,
+                         attack_start=attack_start, baseline_thr=baseline_thr, host=host)
 
 
 def main() -> None:
@@ -216,13 +289,17 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Setup")
-        mode = st.radio("Data source", ["Replay (recorded CIC)", "Live server capture"])
+        mode = st.radio("Data source",
+                        ["Live (real-time)", "Live (static capture)", "Replay (recorded CIC)"])
         horizon = st.selectbox("Forecast horizon", [1, 2, 4],
                                format_func=lambda k: f"+{k*30}s", index=2)
         mc = st.checkbox("Show uncertainty band (MC-dropout, slower)", value=False)
 
-    if mode == "Live server capture":
-        live_view(horizon, mc)
+    if mode == "Live (real-time)":
+        live_realtime_view(horizon, mc)
+        return
+    if mode == "Live (static capture)":
+        live_static_view(horizon, mc)
         return
 
     with st.sidebar:

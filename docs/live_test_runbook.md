@@ -34,6 +34,46 @@ streamlit run demo/app.py
 Record the **exact wall-clock time** you launch each attack — lead time =
 (attack launch time) − (first sustained alert time).
 
+## Real-time mode (live dashboard, PC + SSH-key sync)
+
+This runs the dashboard **live**: the server captures flows continuously, this PC
+auto-pulls them every few seconds, and the forecast updates on screen as an attack
+unfolds. Positive lead time comes from a **ramping** attack measured against a
+signature baseline (an abrupt attack is detected only *at* onset — nothing can
+forecast a no-run-up attack).
+
+### One-time: passwordless SSH (so the sync loop needs no password)
+On this PC:
+```bash
+ls ~/.ssh/id_ed25519.pub || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+# copy the key to the server (paste your password once):
+ssh aayush-gupta@100.72.80.52 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys" < ~/.ssh/id_ed25519.pub
+ssh -o BatchMode=yes aayush-gupta@100.72.80.52 echo KEY_OK   # must print KEY_OK, no prompt
+```
+
+### Server: live capture (continuous)
+```bash
+mkdir -p ~/nv_flows
+sudo cicflowmeter -i tailscale0 -c ~/nv_flows/live.csv    # appends flows as they flush
+```
+If `-i` buffers and rows don't appear, fall back to rolling pcap chunks:
+`sudo tcpdump -i tailscale0 -G 30 -w ~/nv_cap/chunk-%s.pcap` + a loop running
+`cicflowmeter -d ~/nv_cap -c ~/nv_flows/live.csv` on new chunks.
+
+### This PC: sync + dashboard
+```bash
+SERVER=aayush-gupta@100.72.80.52 ./scripts/live_sync.sh      # pulls live.csv every 3s
+streamlit run demo/app.py                                    # pick "Live (real-time)"
+```
+
+### This PC: launch a ramping attack (authorized, your own server)
+```bash
+SERVER=100.72.80.52 ./agent/ramp_scan.sh          # gradual port fan-out
+SERVER=100.72.80.52 ./agent/ramp_bruteforce.sh    # rising connection rate to :22
+```
+Watch the **model alert** line cross before the **baseline alert** line — the gap is
+the lead time, shown live as "Lead vs signature IDS".
+
 ## 1. Port scan — the strongest case (recon ramp)
 
 ```bash
