@@ -27,6 +27,12 @@ dist/
 *.pcap
 *.pcapng
 
+# Exception: ship the final trained checkpoint (PS requires weights in the repo).
+# Parent dirs must be re-included before the file itself.
+!models/
+!models/wm_final/
+!models/wm_final/best.ckpt
+
 # Notebooks
 .ipynb_checkpoints/
 
