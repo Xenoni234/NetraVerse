@@ -34,7 +34,8 @@ class WorldModelConfig:
     dropout: float = 0.2
     horizons: tuple[int, ...] = (1, 2, 4)
     rollout_steps: int = 4
-    n_stages: int = 6
+    n_stages: int = 7
+    use_attention: bool = True   # temporal attention over encoder states (explainability)
 
     @property
     def n_mask(self) -> int:
@@ -56,6 +57,15 @@ class WorldModel(nn.Module):
             config.input_size, config.hidden_size, config.num_layers,
             batch_first=True, dropout=drop,
         )
+        # Temporal attention: at each decoder step, attend over the encoder's
+        # per-window hidden states so the heads (and explanations) can point at
+        # WHICH history windows drove the forecast (PS: attention-based explainability).
+        self.use_attention = config.use_attention
+        if self.use_attention:
+            self.attn_q = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+            self.attn_k = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+            self.attn_combine = nn.Linear(config.hidden_size * 2, config.hidden_size)
+
         self.state_head = StateHead(config.hidden_size, config.state_size, dropout=config.dropout)
         self.risk_head = RiskHead(config.hidden_size, dropout=config.dropout)
         self.stage_head = StageHead(config.hidden_size, config.n_stages, dropout=config.dropout)
@@ -103,15 +113,25 @@ class WorldModel(nn.Module):
         """
         cfg = self.config
         steps = n_steps or cfg.rollout_steps
-        _, (h, c) = self.encoder(x)
+        enc_out, (h, c) = self.encoder(x)      # enc_out (B, L, H) — per-window states
 
         prev = x[:, -1, :]                     # (B, F) last observed frame
         free_run = (not self.training) or (targets is None)
 
-        means, logvars, risks, stages = [], [], [], []
+        attn_keys = self.attn_k(enc_out) if self.use_attention else None  # (B, L, H)
+        scale = cfg.hidden_size ** 0.5
+
+        means, logvars, risks, stages, attns = [], [], [], [], []
         for step in range(steps):
             out, (h, c) = self.decoder(prev.unsqueeze(1), (h, c))
             hidden = out[:, -1, :]             # (B, H)
+            if self.use_attention:
+                q = self.attn_q(hidden).unsqueeze(1)               # (B, 1, H)
+                scores = torch.bmm(q, attn_keys.transpose(1, 2)).squeeze(1) / scale  # (B, L)
+                weights = torch.softmax(scores, dim=-1)            # (B, L)
+                context = torch.bmm(weights.unsqueeze(1), enc_out).squeeze(1)  # (B, H)
+                hidden = torch.tanh(self.attn_combine(torch.cat([hidden, context], dim=-1)))
+                attns.append(weights)
             mean, logvar = self.state_head(hidden)
             means.append(mean)
             logvars.append(logvar)
@@ -134,6 +154,8 @@ class WorldModel(nn.Module):
             "risk_logits": torch.stack(risks, dim=1),
             "stage_logits": torch.stack(stages, dim=1),
         }
+        if self.use_attention:
+            out["attn_weights"] = torch.stack(attns, dim=1)   # (B, steps, L)
         return self.select_horizons(out)
 
     def select_horizons(

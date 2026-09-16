@@ -68,8 +68,9 @@ INITIAL_ACCESS: Final[int] = 2
 LATERAL_MOVEMENT: Final[int] = 3
 C2: Final[int] = 4
 EXFILTRATION: Final[int] = 5
+IMPACT: Final[int] = 6   # TA0040 — DoS/DDoS/availability attacks
 
-N_STAGES: Final[int] = 6
+N_STAGES: Final[int] = 7
 
 #: Fallback for a family not in the table. Logged, never silently absorbed.
 UNKNOWN_STAGE: Final[int] = BENIGN
@@ -86,6 +87,7 @@ STAGE_NAMES: Final[Mapping[int, str]] = {
     LATERAL_MOVEMENT: "LATERAL_MOVEMENT",
     C2: "C2",
     EXFILTRATION: "EXFILTRATION",
+    IMPACT: "IMPACT",
 }
 
 #: ATT&CK tactic ids, for the report and dashboard tooltips.
@@ -96,6 +98,7 @@ STAGE_TACTICS: Final[Mapping[int, str]] = {
     LATERAL_MOVEMENT: "TA0008",
     C2: "TA0011",
     EXFILTRATION: "TA0010",
+    IMPACT: "TA0040",
 }
 
 #: Short descriptions used by :mod:`src.explain.human_readable`.
@@ -106,6 +109,7 @@ STAGE_DESCRIPTIONS: Final[Mapping[int, str]] = {
     LATERAL_MOVEMENT: "Spreading from a compromised host to other internal systems.",
     C2: "Maintaining a control channel to a compromised host.",
     EXFILTRATION: "Moving data out of the network.",
+    IMPACT: "Disrupting availability: denial-of-service / flooding.",
 }
 
 # --------------------------------------------------------------------------- #
@@ -140,10 +144,10 @@ FAMILY_TO_STAGE: Final[Mapping[str, int]] = {
     "Backdoor": C2,
     # ---- exfiltration ----
     "Exfiltration": EXFILTRATION,
-    # ---- NO VALID STAGE: masked from the stage loss, see CLAUDE.md 10-E ----
-    "DoS": STAGE_MASKED,
-    "DDoS": STAGE_MASKED,
-    "Generic": STAGE_MASKED,
+    # ---- impact (TA0040): availability attacks (resolved CLAUDE.md 10-E) ----
+    "DoS": IMPACT,
+    "DDoS": IMPACT,
+    "Generic": IMPACT,
     # TODO: complete from docs/attack_taxonomy.md, incl. CIC-IoT-2023 families.
 }
 
@@ -381,7 +385,7 @@ def stage_order() -> tuple[int, ...]:
     errors visible: confusing adjacent stages is forgivable, confusing RECON with
     EXFILTRATION is not.
     """
-    return (BENIGN, RECON, INITIAL_ACCESS, LATERAL_MOVEMENT, C2, EXFILTRATION)
+    return (BENIGN, RECON, INITIAL_ACCESS, LATERAL_MOVEMENT, C2, EXFILTRATION, IMPACT)
 
 
 def families_for_stage(stage: int) -> tuple[str, ...]:
@@ -402,6 +406,7 @@ __all__ = [
     "LATERAL_MOVEMENT",
     "C2",
     "EXFILTRATION",
+    "IMPACT",
     "N_STAGES",
     "UNKNOWN_STAGE",
     "STAGE_MASKED",

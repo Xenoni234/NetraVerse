@@ -36,6 +36,7 @@ from src.eval import splits as S
 from src.models import get_device
 from src.models.lstm_encoder_decoder import WorldModel, WorldModelConfig
 from src.models.losses import LossWeights, MultiTaskLoss, pos_weight_from_labels
+from src.mitre.stage_mapping import N_STAGES as _N_STAGES
 
 DEFAULT_DAYS = ("tuesday", "wednesday", "thursday", "friday")  # skip Monday (benign-only)
 
@@ -276,7 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     model = WorldModel(WorldModelConfig(
         input_size=F, state_size=state_size, hidden_size=args.hidden_size,
         num_layers=2, dropout=0.2, horizons=tuple(horizons), rollout_steps=W.ROLLOUT_STEPS,
-        n_stages=6,
+        n_stages=_N_STAGES,
     )).to(device)
     print(f"[model] {model.num_parameters():,} params")
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
