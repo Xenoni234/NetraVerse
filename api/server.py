@@ -108,17 +108,18 @@ def _timeline_payload(host: pd.DataFrame, *, known: bool, mc: int = 0) -> dict:
             "iat": round(float(r.get("mean_iat_s", 0.0)), 4),
         })
 
-    # per-horizon forecast (the K-step trajectory) from the latest window
-    last = tl.iloc[-1]
+    # per-horizon forecast (the K-step trajectory) from the highest-risk window,
+    # so the forecast shows the meaningful rising path rather than a quiet tail.
+    focus = tl.loc[tl.risk_k4.idxmax()]
     steps = []
     for k in fc.horizons:
-        rk = float(last[f"risk_k{k}"])
-        band = (round(float(last.get(f"risk_hi_k{k}", rk)) - float(last.get(f"risk_lo_k{k}", rk)), 4)
+        rk = float(focus[f"risk_k{k}"])
+        band = (round(float(focus.get(f"risk_hi_k{k}", rk)) - float(focus.get(f"risk_lo_k{k}", rk)), 4)
                 if mc else None)
-        steps.append({"horizon": f"+{k*30}s", "utc": _iso(pd.Timestamp(last.window_start)+pd.Timedelta(seconds=30*k)),
+        steps.append({"horizon": f"+{k*30}s", "utc": _iso(pd.Timestamp(focus.window_start)+pd.Timedelta(seconds=30*k)),
                       "risk": round(rk, 4), "uncertainty": band,
-                      "stage": STAGE_UI.get(int(last[f"stage_k{k}"]), "UNMAPPED"),
-                      "tactic": STAGE_TACTICS.get(int(last[f"stage_k{k}"]), ""),
+                      "stage": STAGE_UI.get(int(focus[f"stage_k{k}"]), "UNMAPPED"),
+                      "tactic": STAGE_TACTICS.get(int(focus[f"stage_k{k}"]), ""),
                       "confidence": "High" if rk >= 0.6 else "Medium" if rk >= thr else "Low"})
 
     alert = first_sustained(tl, "risk_k4", thr)
@@ -133,6 +134,7 @@ def _timeline_payload(host: pd.DataFrame, *, known: bool, mc: int = 0) -> dict:
         "lead_time_s": (None if lead is None else round(float(lead), 0)),
         "peak_risk": round(float(peak.risk_k4), 4),
         "peak_at": _iso(peak.window_start),
+        "focus_at": _iso(focus.window_start),
         "n_windows": int(len(host)), "n_forecasts": int(len(tl)),
         "ground_truth": bool(known),
     }
@@ -259,15 +261,43 @@ async def upload(file: UploadFile = File(...)):
     return {"upload_id": uid, "stages": steps, "hosts": elig.host.tolist()[:50]}
 
 
-@app.get("/api/upload/{uid}/forecast")
-def upload_forecast(uid: str, host: str, mc: int = 0):
+def _upload_host_frame(uid: str, host: str) -> pd.DataFrame:
     if uid not in _UPLOADS:
         raise HTTPException(404, "Unknown upload id (session expired).")
     frame = _UPLOADS[uid]["frame"]
-    host_frame = frame.loc[frame.entity_id.astype(str) == host].sort_values("window_start").reset_index(drop=True)
-    if host_frame.empty:
+    hf = frame.loc[frame.entity_id.astype(str) == host].sort_values("window_start").reset_index(drop=True)
+    if hf.empty:
         raise HTTPException(404, "Unknown host in this upload.")
-    payload = _timeline_payload(host_frame, known=False, mc=mc)
+    return hf
+
+
+@app.get("/api/upload/{uid}/forecast")
+def upload_forecast(uid: str, host: str, mc: int = 0):
+    payload = _timeline_payload(_upload_host_frame(uid, host), known=False, mc=mc)
     payload["scenario"] = {"campaign": "upload", "label": "Uploaded capture", "host": host,
                            "dataset": "user upload (labels unknown)"}
     return payload
+
+
+@app.get("/api/upload/{uid}/explain")
+def upload_explain(uid: str, host: str, window: str):
+    return _explain_host(_upload_host_frame(uid, host), window)
+
+
+@app.get("/api/evaluation")
+def evaluation():
+    """Per-horizon world-model vs logistic-regression metrics for the Validate page."""
+    b = json.loads(BENCH.read_text(encoding="utf-8")) if BENCH.exists() else {"horizons": [], "rows": []}
+    by_model = {r["model"]: r for r in b.get("rows", [])}
+    wm, lr = by_model.get("World model"), by_model.get("Logistic regression")
+    rows = []
+    for i, hz in enumerate(b.get("horizons", [])):
+        def m(r):
+            return None if not r else {"prauc": r["pr_auc"][i], "f1": r["f1"][i], "fpr": r["fpr"][i]}
+        rows.append({"horizon": hz, "worldModel": m(wm), "baseline": m(lr)})
+    return {"by_horizon": rows, "takeaway": b.get("takeaway", ""),
+            "generalization": [
+                {"setting": "In-distribution (held-out time)", "result": "World model beats persistence and LR at every horizon (see benchmark)."},
+                {"setting": "Held-out attack family", "result": "Not yet measured in this build."},
+                {"setting": "Cross-dataset", "result": "Trained on CIC-IDS2017/2018 + CTU-13; external cross-dataset test not yet run."},
+            ]}
