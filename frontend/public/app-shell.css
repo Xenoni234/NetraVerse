@@ -1,0 +1,132 @@
+/* NetraVerse shared shell: one responsive geometry and one visual language. */
+:root {
+  --nv-sidebar: 240px;
+  --nv-header: 56px;
+  --nv-canvas: #f8fafc;
+  --nv-panel: #ffffff;
+  --nv-subtle: #f1f5f9;
+  --nv-ink: #0f172a;
+  --nv-muted: #475569;
+  --nv-border: #e2e8f0;
+  --nv-primary: #0284c7;
+  --nv-teal: #0d9488;
+}
+
+html { min-width: 320px; background: var(--nv-canvas); }
+body {
+  min-width: 320px;
+  overflow-x: hidden;
+  background: var(--nv-canvas) !important;
+  color: var(--nv-ink) !important;
+  font-family: "IBM Plex Sans", sans-serif !important;
+}
+
+/* Normalize the exported page shells without removing their page-specific content. */
+aside {
+  width: var(--nv-sidebar) !important;
+  background: var(--nv-panel) !important;
+  border-color: var(--nv-border) !important;
+  overflow-y: auto;
+}
+aside nav a {
+  min-height: 36px;
+  border-radius: 2px !important;
+  outline-offset: -2px;
+}
+aside nav a[aria-current="page"] {
+  background: #e0f2fe !important;
+  color: #0369a1 !important;
+  border-left-color: var(--nv-primary) !important;
+}
+aside nav a:focus-visible,
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--nv-primary);
+  outline-offset: 2px;
+}
+
+body > div[class*="pl-"],
+body > div[class*="pl["] {
+  padding-left: var(--nv-sidebar) !important;
+  min-height: 100vh;
+}
+header {
+  left: var(--nv-sidebar) !important;
+  height: var(--nv-header) !important;
+  background: var(--nv-panel) !important;
+  border-color: var(--nv-border) !important;
+  padding-inline: clamp(16px, 2vw, 32px) !important;
+  overflow: hidden;
+}
+header > div { min-width: 0; }
+header .material-symbols-outlined { font-size: 18px; }
+main { padding-top: var(--nv-header) !important; }
+main > div,
+main > section,
+main .max-w-6xl,
+main .max-w-7xl,
+main .max-w-\[1240px\],
+main .max-w-\[1440px\] {
+  max-width: 1440px !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Keep dense telemetry legible and prevent long machine values from forcing overflow. */
+[class*="font-code"], code, pre, .font-mono {
+  font-family: "IBM Plex Mono", "JetBrains Mono", monospace !important;
+  font-variant-numeric: tabular-nums;
+}
+table { width: 100%; border-collapse: collapse; }
+td, th { overflow-wrap: anywhere; }
+svg { max-width: 100%; }
+button, a, input, select { border-radius: 4px !important; }
+button { cursor: pointer; }
+
+@media (max-width: 1100px) {
+  :root { --nv-sidebar: 72px; }
+  aside > div:first-child > div:first-child { padding-inline: 12px !important; }
+  aside > div:first-child > div:first-child > div { justify-content: center; }
+  aside > div:first-child > div:first-child > div > *:not(:first-child),
+  aside > div:first-child > div:first-child > span,
+  aside nav a span:not(:first-child),
+  aside > div:last-child,
+  aside nav + div,
+  aside .text-outline,
+  aside [class*="tracking-wider"] { display: none !important; }
+  aside nav a { justify-content: center; padding-inline: 8px !important; }
+  aside nav a span:first-child { font-size: 10px !important; }
+  header { padding-inline: 16px !important; }
+  header > div:first-child > div:not(:first-child) { display: none !important; }
+  main > div { padding-inline: clamp(16px, 2vw, 24px) !important; }
+}
+
+@media (max-width: 700px) {
+  :root { --nv-sidebar: 100%; --nv-header: 56px; }
+  aside {
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--nv-border) !important;
+    overflow: visible !important;
+    z-index: 50 !important;
+  }
+  aside > div:first-child > div:first-child,
+  aside > div:first-child > div:first-child > div { display: none !important; }
+  aside > div:first-child { width: 100%; }
+  aside nav { display: grid !important; grid-template-columns: repeat(8, minmax(52px, 1fr)); padding: 4px !important; }
+  aside nav a { min-height: 38px; padding: 6px 2px !important; border-left: 0 !important; border-bottom: 2px solid transparent; }
+  aside nav a[aria-current="page"] { border-bottom-color: var(--nv-primary) !important; }
+  aside nav a span:first-child { display: none !important; }
+  aside nav a span:last-child { display: block !important; font-size: 10px !important; white-space: nowrap; }
+  body > div[class*="pl-"], body > div[class*="pl["] { padding-left: 0 !important; }
+  header { position: relative !important; left: 0 !important; top: 0 !important; }
+  main { padding-top: 0 !important; }
+  main > div { padding: 16px !important; }
+  h1 { font-size: clamp(1.35rem, 6vw, 2rem) !important; line-height: 1.2 !important; }
+  .overflow-x-auto { max-width: 100%; }
+}

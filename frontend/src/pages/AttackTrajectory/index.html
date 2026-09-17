@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+    @layer base {
+      html, body { margin: 0; padding: 0; }
+      body { overscroll-behavior: none; }
+      main > :first-child { margin-top: 0 !important; }
+      main > :last-child { margin-bottom: 0 !important; }
+    }
+    ::-webkit-scrollbar { display: none; }
+  </style>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "on-primary": "#ffffff",
+            "surface-container-highest": "#e2e8f0",
+            "primary-fixed": "#cce5ff",
+            "tertiary-fixed-dim": "#ffb77d",
+            "tertiary-container": "#fff7ed",
+            "background": "#faf8ff",
+            "on-surface": "#0f172a",
+            "primary": "#0284c7",
+            "surface-tint": "#0284c7",
+            "secondary-fixed": "#ccfbf1",
+            "error-container": "#fef2f2",
+            "surface": "#ffffff",
+            "on-secondary-fixed": "#00201d",
+            "surface-variant": "#f1f5f9",
+            "on-primary-fixed": "#001d31",
+            "on-error-container": "#991b1b",
+            "on-error": "#ffffff",
+            "on-tertiary-container": "#9a3412",
+            "on-tertiary-fixed": "#2f1500",
+            "on-surface-variant": "#64748b",
+            "secondary-fixed-dim": "#5eead4",
+            "surface-container-low": "#f8fafc",
+            "on-secondary-fixed-variant": "#005049",
+            "on-secondary-container": "#115e59",
+            "surface-container": "#f1f5f9",
+            "outline-variant": "#e2e8f0",
+            "tertiary": "#ea580c",
+            "on-primary-fixed-variant": "#0369a1",
+            "on-tertiary": "#ffffff",
+            "inverse-primary": "#93ccff",
+            "primary-fixed-dim": "#93ccff",
+            "secondary": "#0d9488",
+            "outline": "#94a3b8",
+            "on-secondary": "#ffffff",
+            "on-primary-container": "#ffffff",
+            "on-tertiary-fixed-variant": "#6e3900",
+            "primary-container": "#0369a1",
+            "on-background": "#0f172a",
+            "tertiary-fixed": "#ffedd5",
+            "inverse-on-surface": "#eef0ff",
+            "inverse-surface": "#1e293b",
+            "surface-bright": "#ffffff",
+            "surface-dim": "#cbd5e1",
+            "surface-container-high": "#e2e8f0",
+            "surface-container-lowest": "#ffffff",
+            "secondary-container": "#f0fdfa",
+            "error": "#dc2626"
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.375rem",
+            "xl": "0.5rem",
+            "full": "9999px"
+          },
+          fontFamily: {
+            "code-sm": ["JetBrains Mono", "monospace"],
+            "headline-sm": ["IBM Plex Sans", "sans-serif"],
+            "body-lg": ["IBM Plex Sans", "sans-serif"],
+            "headline-md": ["IBM Plex Sans", "sans-serif"],
+            "body-md": ["IBM Plex Sans", "sans-serif"],
+            "headline-lg": ["IBM Plex Sans", "sans-serif"],
+            "label-sm": ["IBM Plex Sans", "sans-serif"],
+            "body-sm": ["IBM Plex Sans", "sans-serif"],
+            "headline-xl": ["IBM Plex Sans", "sans-serif"],
+            "code-lg": ["JetBrains Mono", "monospace"],
+            "label-md": ["IBM Plex Sans", "sans-serif"],
+            "code-md": ["JetBrains Mono", "monospace"]
+          }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="bg-background font-body-md text-body-md text-on-surface antialiased min-h-screen">
+<!-- LEFT SIDEBAR (240px wide) -->
+<aside class="fixed left-0 top-0 h-full w-[240px] bg-surface-container-lowest border-r border-outline-variant z-50 flex flex-col justify-between select-none">
+<div class="flex flex-col">
+<div class="h-14 px-5 border-b border-outline-variant flex flex-col justify-center bg-surface-container-lowest">
+<div class="font-label-sm text-xs uppercase tracking-wider text-primary font-bold truncate">Network Attack Forecasting</div>
+<div class="font-code-sm text-[11px] text-on-surface-variant">SIH26153 / NTRO</div>
+</div>
+<nav class="flex flex-col py-3">
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="home" href="#">
+<span class="font-code-sm text-xs text-outline">01</span><span>Home</span>
+</a>
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="simulate" href="#">
+<span class="font-code-sm text-xs text-outline">02</span><span>Simulate</span>
+</a>
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="forecast" href="#">
+<span class="font-code-sm text-xs text-outline">03</span><span>Forecast</span>
+</a>
+<!-- ACTIVE ITEM: ATT&CK -->
+<a class="flex items-center gap-3 px-5 py-2 bg-sky-50 text-primary font-medium text-sm transition-colors border-l-2 border-primary" data-path="attack" href="#">
+<span class="font-code-sm text-xs text-primary font-semibold">04</span><span class="font-medium">ATT&amp;CK</span>
+</a>
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="investigate" href="#">
+<span class="font-code-sm text-xs text-outline">05</span><span>Investigate</span>
+</a>
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="network" href="#">
+<span class="font-code-sm text-xs text-outline">06</span><span>Network</span>
+</a>
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="validate" href="#">
+<span class="font-code-sm text-xs text-outline">07</span><span>Validate</span>
+</a>
+<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="model" href="#">
+<span class="font-code-sm text-xs text-outline">08</span><span>Model</span>
+</a>
+</nav>
+</div>
+<div class="p-4 border-t border-outline-variant bg-surface-container-lowest font-code-sm text-xs space-y-2 text-on-surface-variant">
+<div class="flex justify-between items-center">
+<span class="text-outline">MODE:</span>
+<span class="text-on-surface font-medium">Offline Replay</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-outline">DATA:</span>
+<span class="text-on-surface font-medium">Network Telemetry</span>
+</div>
+<div class="flex items-center gap-2 pt-2 border-t border-outline-variant">
+<span class="inline-block w-2 h-2 rounded-full bg-secondary"></span>
+<span class="text-[11px] text-secondary font-semibold uppercase tracking-wider">Telemetry Active</span>
+</div>
+</div>
+</aside>
+<!-- MAIN WRAPPER -->
+<div class="pl-[240px]">
+<!-- TOP HEADER -->
+<header class="fixed top-0 left-[240px] right-0 h-14 bg-surface-container-lowest border-b border-outline-variant z-40 px-8 flex items-center justify-between">
+<div class="flex items-center gap-4 text-xs font-code-sm divide-x divide-outline-variant">
+<div class="font-semibold text-on-surface tracking-tight uppercase font-body-md text-sm">
+          Network Attack Forecasting
+        </div>
+<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
+<span class="text-outline uppercase">Scenario:</span>
+<span class="text-on-surface font-medium">CSE-CIC-IDS2018 · Port Scan</span>
+</div>
+<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
+<span class="text-outline uppercase">Host:</span>
+<span class="text-on-surface font-medium">172.31.64.14</span>
+</div>
+<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
+<span class="text-outline uppercase">Current window:</span>
+<span class="text-on-surface font-medium">10:30:00 UTC</span>
+</div>
+<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
+<span class="text-outline uppercase">Horizon:</span>
+<span class="text-primary font-semibold">+120s</span>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<span class="px-2.5 py-0.5 rounded text-xs font-code-sm bg-surface-container text-on-surface-variant border border-outline-variant uppercase">
+          Offline Replay
+        </span>
+<div class="w-8 h-8 rounded-full bg-slate-100 border border-outline-variant flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">person</span>
+</div>
+</div>
+</header>
+<!-- CONTENT AREA -->
+<main class="relative pt-14 w-full px-8 py-7">
+<div class="max-w-6xl mx-auto flex flex-col gap-6">
+<!-- 2. PAGE HEADER & BREADCRUMB -->
+<div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+<div class="flex flex-col gap-1">
+<div class="font-code-sm text-xs font-semibold uppercase tracking-wider text-primary">
+              04 / ATT&amp;CK TRAJECTORY · CSE-CIC-IDS2018
+            </div>
+<h1 class="text-2xl font-bold tracking-tight text-on-surface uppercase">
+              Where is the attack heading?
+            </h1>
+<p class="text-sm text-on-surface-variant">
+              See how forecast network behaviour maps to MITRE ATT&amp;CK.
+            </p>
+</div>
+<div class="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-lowest border border-outline-variant text-xs font-code-sm text-on-surface-variant shadow-sm">
+<span>Host: <strong class="text-on-surface font-medium">172.31.64.14</strong></span>
+<span class="text-outline">·</span>
+<span>Window: <strong class="text-on-surface font-medium">10:30:00 UTC</strong></span>
+<span class="text-outline">·</span>
+<span>Horizon: <strong class="text-primary font-semibold">+120s</strong></span>
+</div>
+</div>
+<!-- 3. COMPACT TOP SUMMARY STRIP -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+<div class="flex flex-wrap items-center gap-6 text-sm divide-x divide-outline-variant">
+<!-- Current Stage -->
+<div class="flex items-center gap-2">
+<span class="text-xs font-code-sm uppercase text-outline">Current Stage</span>
+<div class="flex items-center gap-1.5 font-medium text-on-surface">
+<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                Reconnaissance
+              </div>
+</div>
+<!-- Forecast Stage -->
+<div class="pl-6 flex items-center gap-2">
+<span class="text-xs font-code-sm uppercase text-outline">Forecast Stage</span>
+<span class="font-bold text-on-surface">Lateral Movement</span>
+</div>
+<!-- Forecast Risk -->
+<div class="pl-6 flex items-center gap-2">
+<span class="text-xs font-code-sm uppercase text-outline">Forecast Risk</span>
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-code-sm font-semibold bg-red-50 text-red-700 border border-red-200">
+                0.81 · High
+              </span>
+</div>
+<!-- Horizon -->
+<div class="pl-6 flex items-center gap-2">
+<span class="text-xs font-code-sm uppercase text-outline">Horizon</span>
+<span class="font-code-sm font-semibold text-primary text-sm">+120s</span>
+</div>
+</div>
+<!-- Interactive Horizon Pills -->
+<div class="flex items-center gap-1.5 self-start md:self-auto font-code-sm text-xs">
+<button class="px-2.5 py-1 rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors">
+              +30s
+            </button>
+<button class="px-2.5 py-1 rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors">
+              +60s
+            </button>
+<button class="px-2.5 py-1 rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors">
+              +90s
+            </button>
+<button class="px-2.5 py-1 rounded bg-primary text-on-primary font-semibold shadow-sm flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+              +120s
+            </button>
+</div>
+</div>
+<!-- 4. CENTERPIECE VISUAL: PREDICTED ATTACK TRAJECTORY -->
+<section class="bg-surface-container-lowest border border-outline-variant rounded-lg p-6 shadow-sm flex flex-col gap-5">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-outline-variant pb-4">
+<div>
+<h2 class="text-base font-bold text-on-surface uppercase tracking-tight">Predicted Attack Trajectory</h2>
+<p class="text-xs text-on-surface-variant mt-0.5">
+                Probabilistic progression across future time horizons. Stages represent model forecasts rather than confirmed attacker actions.
+              </p>
+</div>
+<div class="flex items-center gap-4 text-xs font-code-sm text-on-surface-variant">
+<span class="flex items-center gap-1.5">
+<span class="w-2.5 h-2.5 rounded-sm bg-slate-100 border border-slate-300"></span> Observed
+              </span>
+<span class="flex items-center gap-1.5">
+<span class="w-2.5 h-2.5 rounded-sm bg-sky-50 border border-sky-300"></span> Predicted
+              </span>
+</div>
+</div>
+<!-- Timeline Track Container -->
+<div class="overflow-x-auto pt-1 pb-2">
+<div class="min-w-[860px] flex items-center justify-between gap-2">
+<!-- 1. OBSERVED BASELINE -->
+<div class="flex-1 bg-slate-50/70 border border-slate-200 rounded-lg p-3.5 flex flex-col gap-2">
+<div class="flex items-center justify-between text-xs">
+<span class="font-code-sm font-semibold text-slate-500 uppercase">NOW · 10:30:00</span>
+<span class="px-1.5 py-0.5 rounded text-[10px] font-code-sm uppercase bg-slate-200/80 text-slate-700 font-medium">
+                    Observed Baseline
+                  </span>
+</div>
+<div class="font-semibold text-slate-800 text-sm">
+                  Reconnaissance
+                </div>
+<div class="flex items-center justify-between text-xs font-code-sm pt-1 border-t border-slate-200/60">
+<span class="text-slate-500">Risk:</span>
+<span class="font-semibold text-emerald-700">0.22 (Low)</span>
+</div>
+</div>
+<!-- Arrow -->
+<div class="text-slate-400 flex items-center justify-center px-0.5">
+<span class="material-symbols-outlined text-[18px]">trending_flat</span>
+</div>
+<!-- 2. +30s -->
+<div class="flex-1 bg-surface-container-lowest border border-outline-variant rounded-lg p-3.5 flex flex-col gap-2">
+<div class="flex items-center justify-between text-xs">
+<span class="font-code-sm font-semibold text-primary uppercase">+30s · 10:30:30</span>
+<span class="px-1.5 py-0.5 rounded text-[10px] font-code-sm uppercase bg-sky-50 text-sky-700 border border-sky-100 font-medium">
+                    Predicted
+                  </span>
+</div>
+<div class="font-semibold text-on-surface text-sm">
+                  Reconnaissance
+                </div>
+<div class="flex items-center justify-between text-xs font-code-sm pt-1 border-t border-outline-variant">
+<span class="text-on-surface-variant">Risk:</span>
+<span class="font-medium text-on-surface">0.42 (Low-Mod)</span>
+</div>
+</div>
+<!-- Arrow -->
+<div class="text-slate-400 flex items-center justify-center px-0.5">
+<span class="material-symbols-outlined text-[18px]">trending_flat</span>
+</div>
+<!-- 3. +60s -->
+<div class="flex-1 bg-surface-container-lowest border border-outline-variant rounded-lg p-3.5 flex flex-col gap-2">
+<div class="flex items-center justify-between text-xs">
+<span class="font-code-sm font-semibold text-orange-600 uppercase">+60s · 10:31:00</span>
+<span class="px-1.5 py-0.5 rounded text-[10px] font-code-sm uppercase bg-orange-50 text-orange-700 border border-orange-200 font-medium">
+                    Elevated
+                  </span>
+</div>
+<div class="font-semibold text-orange-700 text-sm">
+                  Initial Access
+                </div>
+<div class="flex items-center justify-between text-xs font-code-sm pt-1 border-t border-outline-variant">
+<span class="text-on-surface-variant">Risk:</span>
+<span class="font-semibold text-orange-700">0.58 (Elevated)</span>
+</div>
+</div>
+<!-- Arrow -->
+<div class="text-slate-400 flex items-center justify-center px-0.5">
+<span class="material-symbols-outlined text-[18px]">trending_flat</span>
+</div>
+<!-- 4. +90s -->
+<div class="flex-1 bg-surface-container-lowest border border-outline-variant rounded-lg p-3.5 flex flex-col gap-2">
+<div class="flex items-center justify-between text-xs">
+<span class="font-code-sm font-semibold text-red-600 uppercase">+90s · 10:31:30</span>
+<span class="px-1.5 py-0.5 rounded text-[10px] font-code-sm uppercase bg-sky-50 text-sky-700 border border-sky-100 font-medium">
+                    Predicted
+                  </span>
+</div>
+<div class="font-semibold text-on-surface text-sm">
+                  Lateral Movement
+                </div>
+<div class="flex items-center justify-between text-xs font-code-sm pt-1 border-t border-outline-variant">
+<span class="text-on-surface-variant">Risk:</span>
+<span class="font-semibold text-red-600">0.72 (High)</span>
+</div>
+</div>
+<!-- Arrow -->
+<div class="text-primary flex items-center justify-center px-0.5 font-bold">
+<span class="material-symbols-outlined text-[18px]">trending_flat</span>
+</div>
+<!-- 5. +120s ACTIVE FOCUS -->
+<div class="flex-1 bg-sky-50/40 border-2 border-primary rounded-lg p-3.5 flex flex-col gap-2 relative shadow-sm">
+<div class="flex items-center justify-between text-xs">
+<span class="font-code-sm font-bold text-primary uppercase">+120s · 10:32:00</span>
+<span class="px-1.5 py-0.5 rounded text-[10px] font-code-sm uppercase bg-primary text-white font-semibold tracking-wider">
+                    Active Focus
+                  </span>
+</div>
+<div class="font-bold text-red-600 text-sm">
+                  Lateral Movement
+                </div>
+<div class="flex items-center justify-between text-xs font-code-sm pt-1 border-t border-sky-200">
+<span class="text-on-surface-variant">Risk:</span>
+<span class="font-bold text-red-600">0.81 (High)</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- 5. FOCUSED 2-COLUMN SECTION -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+<!-- LEFT COLUMN: Selected Stage & ATT&CK Mapping (6 Cols) -->
+<div class="lg:col-span-6 bg-surface-container-lowest border border-outline-variant rounded-lg p-6 shadow-sm flex flex-col gap-5">
+<div class="flex items-center justify-between border-b border-outline-variant pb-3">
+<div>
+<span class="font-code-sm text-xs font-semibold text-primary uppercase tracking-wider block">Selected Stage Analysis</span>
+<h3 class="text-base font-bold text-on-surface uppercase tracking-tight mt-0.5">
+                  Lateral Movement (+120s)
+                </h3>
+</div>
+<span class="px-2 py-0.5 rounded text-xs font-code-sm font-semibold bg-red-50 text-red-700 border border-red-200">
+                Risk 0.81 · High
+              </span>
+</div>
+<p class="text-sm text-on-surface-variant leading-relaxed">
+              Projected movement toward additional internal hosts based on expanding east-west network activity.
+            </p>
+<!-- MITRE ATT&CK Mapping Box -->
+<div class="bg-surface-container-low border border-outline-variant rounded-lg p-4 flex flex-col gap-4">
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+<div class="bg-surface-container-lowest p-3 rounded border border-outline-variant/60">
+<span class="text-xs font-code-sm text-outline uppercase block">Tactic</span>
+<span class="font-semibold text-on-surface text-sm mt-0.5 block">Lateral Movement</span>
+<span class="text-xs font-code-sm text-primary">TA0008</span>
+</div>
+<div class="bg-surface-container-lowest p-3 rounded border border-outline-variant/60">
+<span class="text-xs font-code-sm text-outline uppercase block">Primary Technique</span>
+<span class="font-semibold text-on-surface text-sm mt-0.5 block">Remote Services</span>
+<span class="text-xs font-code-sm text-primary">T1021.002 · SMB / Admin Shares</span>
+</div>
+</div>
+<div class="flex flex-col gap-1.5">
+<span class="text-xs font-code-sm text-outline uppercase font-semibold">Why this mapping?</span>
+<p class="text-xs text-on-surface-variant leading-relaxed">
+                  Observed internal fan-out and SMB connection behaviour are consistent with network activity associated with this technique.
+                </p>
+</div>
+<div class="pt-2 border-t border-outline-variant/60 flex justify-end">
+<a class="text-xs font-medium text-primary hover:underline inline-flex items-center gap-1" href="#">
+                  View Technique Details <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+</a>
+</div>
+</div>
+</div>
+<!-- RIGHT COLUMN: Supporting Behaviour & Ground Truth (6 Cols) -->
+<div class="lg:col-span-6 flex flex-col gap-5">
+<!-- Supporting Network Behaviour Card -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-6 shadow-sm flex flex-col gap-4">
+<div class="border-b border-outline-variant pb-3">
+<h3 class="text-base font-bold text-on-surface uppercase tracking-tight">
+                  Supporting Network Behaviour
+                </h3>
+<p class="text-xs text-on-surface-variant mt-0.5">
+                  Three observable network signals driving this forecast mapping:
+                </p>
+</div>
+<div class="flex flex-col gap-3">
+<!-- 01 -->
+<div class="flex items-start gap-3 p-3 rounded bg-surface-container-low border border-outline-variant/60">
+<span class="font-code-sm text-xs font-bold text-primary px-1.5 py-0.5 rounded bg-sky-50 border border-sky-100">01</span>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-on-surface">Increasing internal endpoint fan-out</span>
+<span class="text-xs text-on-surface-variant">Rapid expansion across adjacent internal hosts</span>
+</div>
+</div>
+<!-- 02 -->
+<div class="flex items-start gap-3 p-3 rounded bg-surface-container-low border border-outline-variant/60">
+<span class="font-code-sm text-xs font-bold text-primary px-1.5 py-0.5 rounded bg-sky-50 border border-sky-100">02</span>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-on-surface">SMB / RPC connection activity</span>
+<span class="text-xs text-on-surface-variant">Repeated session negotiation attempts on port 445</span>
+</div>
+</div>
+<!-- 03 -->
+<div class="flex items-start gap-3 p-3 rounded bg-surface-container-low border border-outline-variant/60">
+<span class="font-code-sm text-xs font-bold text-primary px-1.5 py-0.5 rounded bg-sky-50 border border-sky-100">03</span>
+<div class="flex flex-col">
+<span class="text-xs font-semibold text-on-surface">New east-west communication paths</span>
+<span class="text-xs text-on-surface-variant">Directional traffic shifting toward internal subnets</span>
+</div>
+</div>
+</div>
+<div class="pt-1 flex justify-end">
+<a class="text-xs font-medium text-primary hover:underline inline-flex items-center gap-1" data-path="investigate" href="#">
+                  View Full Evidence in Investigate <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+</a>
+</div>
+</div>
+<!-- Ground Truth Benchmark Card -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-lg p-5 shadow-sm flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<span class="text-xs font-code-sm font-semibold text-on-surface uppercase tracking-wider flex items-center gap-1.5">
+<span class="material-symbols-outlined text-secondary text-[16px]">verified</span>
+                  Ground Truth Benchmark Available
+                </span>
+<span class="text-[11px] font-code-sm px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
+                  +90s early warning lead time
+                </span>
+</div>
+<div class="grid grid-cols-2 gap-3 text-xs bg-surface-container-low p-3 rounded border border-outline-variant/60">
+<div>
+<span class="text-outline uppercase text-[10px] font-code-sm block">Forecasted Horizon</span>
+<span class="font-semibold text-on-surface">Lateral Movement (+120s)</span>
+</div>
+<div>
+<span class="text-outline uppercase text-[10px] font-code-sm block">Dataset Annotation Onset</span>
+<span class="font-medium text-on-surface">10:31:30 UTC</span>
+</div>
+</div>
+<p class="text-[11px] text-on-surface-variant leading-relaxed">
+                Dataset annotations are strictly segregated to evaluate early warning lead time without autoregressive contamination.
+              </p>
+</div>
+</div>
+</div>
+<!-- 6. COLLAPSIBLE BOTTOM BANNER -->
+<div class="bg-surface-container-low border border-outline-variant rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-on-surface-variant">
+<div class="flex items-start sm:items-center gap-2.5">
+<span class="material-symbols-outlined text-outline text-[18px] mt-0.5 sm:mt-0">visibility_off</span>
+<div>
+<span class="font-semibold text-on-surface uppercase tracking-wider font-code-sm mr-1">Network Visibility Limitations:</span>
+<span>Some ATT&amp;CK behaviours (e.g. passive internal enumeration or in-memory credential harvesting) cannot be reliably inferred from network traffic alone. Predicted stages represent model outputs and are not confirmation of attacker actions.</span>
+</div>
+</div>
+<button class="text-xs font-medium text-primary hover:underline whitespace-nowrap self-end sm:self-auto inline-flex items-center gap-1">
+            View Visibility Details <span class="material-symbols-outlined text-[14px]">expand_more</span>
+</button>
+</div>
+<!-- 7. OPERATIONAL BOTTOM ACTION BAR -->
+<footer class="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 pb-8 border-t border-outline-variant">
+<a class="px-4 py-2 rounded bg-surface-container-lowest text-on-surface border border-outline-variant hover:bg-surface-container text-xs font-medium transition-colors inline-flex items-center gap-1.5" data-path="forecast" href="#">
+<span class="material-symbols-outlined text-[15px]">arrow_back</span>
+            Back to Forecast
+          </a>
+<a class="px-5 py-2.5 rounded bg-primary text-on-primary hover:bg-primary-container text-xs font-semibold transition-colors inline-flex items-center gap-2 shadow-sm" data-path="investigate" href="#">
+<span>Investigate Supporting Evidence</span>
+<span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</a>
+</footer>
+</div>
+</main>
+</div>
+<script src="/navigation.js"></script><script src="/api.js"></script></body></html>
