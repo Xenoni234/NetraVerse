@@ -42,6 +42,15 @@ CICFLOWMETER_PY_COLUMN_MAP = {
     "syn_flag_cnt": "syn_count", "ack_flag_cnt": "ack_count", "fin_flag_cnt": "fin_count",
     "rst_flag_cnt": "rst_count", "psh_flag_cnt": "psh_count", "urg_flag_cnt": "urg_count",
     "pkt_len_mean": "pkt_len_mean", "pkt_len_std": "pkt_len_std",
+    "fwd_pkt_len_mean": "fwd_pkt_len_mean",
+    "bwd_pkt_len_mean": "bwd_pkt_len_mean",
+    "pkt_len_var": "pkt_len_var",
+    "fwd_iat_mean": "fwd_iat_mean",
+    "bwd_iat_mean": "bwd_iat_mean",
+    "init_fwd_win_byts": "init_win_fwd",
+    "init_bwd_win_byts": "init_win_bwd",
+    "active_mean": "active_mean",
+    "idle_mean": "idle_mean",
 }
 
 _CANDIDATE_MAPS = {

@@ -1,0 +1,2 @@
+# Install alongside the repository requirements.
+cicflowmeter==0.5.0
