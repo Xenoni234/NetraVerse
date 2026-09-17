@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import torch
 from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
-    campaign_label, first_sustained, history_at, host_catalog, ingest_upload)
+    campaign_label, first_sustained, forecast_log, history_at, host_catalog, ingest_upload)
 from src.data.windowing import apply_scaler
 from src.inference.engine import load_forecaster, lead_time_seconds, explain_window, FEATURE_LABELS
 from src.explain.shap_wrapper import RiskExplainer
@@ -85,17 +85,39 @@ def chart_style(fig, height=280):
 def render(host,timeline,model,primary,known,focus,attribution,sentence,drivers,baseline,mc):
     key=f'risk_k{primary}'
     threshold=model.threshold_for_horizon(primary)
-    lead=lead_time_seconds(timeline,horizon_key=key,threshold=threshold) if known else None
-    if lead is None:
-        text='Unavailable - labels unknown' if not known else 'Unavailable'
-    elif lead > 0:
-        text=f'{lead:.0f} s early'
+    selected=timeline.loc[timeline.window_start==focus].iloc[0]
+    issued=focus+pd.Timedelta(seconds=30)
+    st.metric(f'Focused onset risk | next {primary*30} s', f'{selected[key]:.1%}')
+    status='Above alert threshold' if selected[key]>=threshold else 'Below alert threshold'
+    st.write(f'{status} ({threshold:.4f}). Forecast available at {issued}; '
+             f'covers the next {primary*30} seconds through {issued+pd.Timedelta(seconds=primary*30)}.')
+    st.caption('Model risk score, not a calibrated probability or confirmation of an attack. '
+               'Each point uses the preceding ten completed 30-second windows.')
+    peak=timeline.loc[timeline[key].idxmax()]
+    st.write(f'Across this host: {len(timeline):,} forecasts, '
+             f'{int((timeline[key]>=threshold).sum()):,} above the selected threshold. '
+             f'Peak risk {peak[key]:.1%} at origin {peak.window_start}.')
+    alert=first_sustained(timeline,key,threshold)
+    if alert:
+        st.write(f'First sustained alert confirmed at {alert[0]} after two consecutive alerts.')
     else:
-        text=f'{abs(lead):.0f} s late' if lead < 0 else '0 s - no advance warning'
-    st.metric(f'Warning lead time | +{primary*30} s', text)
-    if known and lead is None:
-        st.caption('No qualified sustained alert or labelled attack in forecast rows.')
-    st.caption('Two consecutive alerts; confirmation at the close of the second 30-second window. Lead time uses the existing inference API.')
+        st.caption('No sustained alert: two consecutive above-threshold forecasts are required.')
+    if known:
+        lead=lead_time_seconds(timeline,horizon_key=key,threshold=threshold)
+        if lead is None:
+            text='Not measurable'
+        elif lead > 0:
+            text=f'{lead:.0f} s early'
+        else:
+            text=f'{abs(lead):.0f} s late' if lead < 0 else '0 s - no advance warning'
+        with st.expander('Measured warning lead time against recorded labels'):
+            st.metric(f'Warning lead time | +{primary*30} s', text)
+            st.caption('Uses the existing inference API and forecast-row labels. Requires a labelled attack '
+                       'and a qualified sustained alert; confirmation is at the close of the second window.')
+    else:
+        st.caption('Forecasts and explanations are available. Warning lead time cannot be measured '
+                   'because this upload has no verified actual attack start time. '
+                   'Upload mode treats any CSV labels as unknown; use Dataset replay for labelled evaluation.')
     st.subheader('Risk timeline')
     fig=go.Figure()
     if known:
@@ -107,12 +129,26 @@ def render(host,timeline,model,primary,known,focus,attribution,sentence,drivers,
             fig.add_trace(go.Scatter(x=timeline.window_start,y=timeline[f'risk_hi_k{k}'],fill='tonexty',fillcolor='rgba(120,154,169,0.09)',line=dict(width=0),showlegend=False,hoverinfo='skip'))
         fig.add_trace(go.Scatter(x=timeline.window_start,y=timeline[f'risk_k{k}'],name=f'+{30*k} s',line=dict(color=COLORS[k],width=3 if k==primary else 1)))
     fig.add_hline(y=threshold,line_dash='dash',line_color=COLORS[primary],annotation_text=f'+{primary*30}s threshold {threshold:.4f}')
-    alert=first_sustained(timeline,key,threshold)
     if alert:
         fig.add_trace(go.Scatter(x=[alert[0]],y=[alert[1]],mode='markers',marker=dict(symbol='square',size=9,color='#b29a60'),name='First sustained alert confirmed'))
     fig.update_yaxes(range=[0,1],title='Forecast risk')
     st.plotly_chart(chart_style(fig,320),width='stretch',config={'displayModeBar':False},key='risk')
     st.caption('Time axis: UTC window start. Shading: recorded attack labels.' if known else 'Time axis: UTC window start. Uploaded traffic is unlabelled; no ground truth is inferred.')
+    st.subheader('Chronological forecast log with evidence')
+    log=forecast_log(host,timeline,model.feature_names,baseline,
+                     {k:model.threshold_for_horizon(k) for k in model.horizons},primary)
+    columns=['Window start (UTC)','Forecast available (UTC)',f'Forecast through (+{30*primary} s, UTC)',
+             *[f'+{30*k} s risk' for k in model.horizons],f'+{30*primary} s stage',
+             'Forecast status','Observed evidence (not SHAP)']
+    st.dataframe(log[columns],hide_index=True,width='stretch',height=320,
+                 column_config={f'+{30*k} s risk':st.column_config.NumberColumn(format='%.4f') for k in model.horizons})
+    st.download_button('Download complete forecast log (CSV)',log.to_csv(index=False).encode('utf-8'),
+                       file_name='forecast_log.csv',mime='text/csv',on_click='ignore')
+    st.caption('Every observed host window is included, oldest first. Initial history and gaps have no prediction; '
+               'they are not zero-risk forecasts. Status uses the selected horizon threshold. '
+               'Evidence compares observed features with the benign gallery reference; it is not a causal explanation. '
+               'Choose a focused forecast time for signed SHAP and attention below. '
+               'The model forecasts rolling +30/+60/+120-second risk, not the complete future attack lifecycle.')
     st.subheader('ATT&CK stage progression | +120 s')
     order=list(stage_order())
     stage=go.Figure(go.Scatter(x=timeline.window_start,y=timeline.stage_k4,mode='lines+markers',line=dict(color='#789aa9',width=1),marker=dict(size=4),

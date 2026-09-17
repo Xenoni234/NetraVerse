@@ -116,6 +116,44 @@ def attack_intervals(host):
     return intervals
 
 
+def forecast_log(host, timeline, feature_names, baseline, thresholds, primary=4):
+    """Join real forecasts to every observed window, without filling history gaps.
+
+    Forecasts become available when the origin window closes. The selected
+    horizon covers the next K windows, not an exact predicted attack timestamp.
+    Evidence is observed elevation; SHAP remains a separate focused explanation.
+    """
+    from src.inference.engine import explain_window
+    from src.mitre.stage_mapping import STAGE_NAMES
+
+    merged = host.merge(timeline, on='window_start', how='left', validate='one_to_one')
+    merged = merged.sort_values('window_start')
+    rows = []
+    for _, window in merged.iterrows():
+        available = pd.notna(window[f'risk_k{primary}'])
+        issued = window.window_start + pd.Timedelta(seconds=30) if available else pd.NaT
+        record = {
+            'Window start (UTC)': window.window_start,
+            'Forecast available (UTC)': issued,
+            f'Forecast through (+{30*primary} s, UTC)': issued + pd.Timedelta(seconds=30*primary),
+        }
+        for k in thresholds:
+            risk = window[f'risk_k{k}']
+            record[f'+{30*k} s risk'] = risk
+            record[f'+{30*k} s stage'] = STAGE_NAMES[int(window[f'stage_k{k}'])] if pd.notna(risk) else None
+        if available:
+            record['Forecast status'] = ('Above alert threshold' if window[f'risk_k{primary}'] >= thresholds[primary]
+                                         else 'Below alert threshold')
+            sentence, drivers = explain_window(window, baseline, feature_names, top_k=3)
+            record['Observed evidence (not SHAP)'] = (sentence.replace('normal ~', 'reference ~') if drivers
+                else 'No feature notably elevated above the benign gallery reference.')
+        else:
+            record['Forecast status'] = 'Insufficient consecutive history'
+            record['Observed evidence (not SHAP)'] = 'No prediction: the required consecutive history is not available.'
+        rows.append(record)
+    return pd.DataFrame(rows)
+
+
 def patch_converter():
     if importlib.metadata.version('cicflowmeter') != '0.5.0':
         raise ValueError('Install demo/requirements.txt: cicflowmeter 0.5.0 is required.')

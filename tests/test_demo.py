@@ -55,6 +55,32 @@ def test_packet_mapping_and_explicit_group():
     assert 'fwd_bytes' not in H.PACKET_FEATURES
 
 
+def test_forecast_log_preserves_missing_history_and_forecast_intervals():
+    host=frame()
+    timeline=pd.DataFrame({'window_start':host.window_start.iloc[9:].to_list()})
+    for k in (1,2,4):
+        timeline[f'risk_k{k}']=[.2,.5,.1]
+        timeline[f'stage_k{k}']=[0,2,0]
+    log=H.forecast_log(host.iloc[::-1],timeline,list(MODEL_COLUMNS),
+                       pd.Series(1.,index=MODEL_COLUMNS),{1:.1,2:.3,4:.4},primary=4)
+    assert log['Window start (UTC)'].is_monotonic_increasing
+    assert len(log)==len(host)
+    assert log.loc[:8,'+120 s risk'].isna().all()
+    assert (log.loc[:8,'Forecast status']=='Insufficient consecutive history').all()
+    assert log.loc[10,'Forecast status']=='Above alert threshold'
+    assert log.loc[9,'Forecast status']=='Below alert threshold'
+    assert log.loc[10,'+120 s stage']=='INITIAL_ACCESS'
+    assert log.loc[9,'Forecast available (UTC)']==host.window_start.iloc[9]+pd.Timedelta(seconds=30)
+    assert log.loc[9,'Forecast through (+120 s, UTC)']==host.window_start.iloc[9]+pd.Timedelta(seconds=150)
+    assert 'reference' in log.loc[9,'Observed evidence (not SHAP)']
+    np.testing.assert_allclose(log['+120 s risk'].dropna(),timeline.risk_k4)
+    other=H.forecast_log(host,timeline,list(MODEL_COLUMNS),
+                        pd.Series(100.,index=MODEL_COLUMNS),{1:.1,2:.3,4:.4},primary=1)
+    assert other.loc[9,'Forecast status']=='Above alert threshold'
+    assert other.loc[9,'Forecast through (+30 s, UTC)']==host.window_start.iloc[9]+pd.Timedelta(seconds=60)
+    assert other.loc[9,'Observed evidence (not SHAP)']=='No feature notably elevated above the benign gallery reference.'
+
+
 @pytest.mark.parametrize('payload,suffix',[(b'', '.csv'),(b'garbage','.csv'),(b'a,b\n1,2\n','.csv'),(b'abc','.txt')])
 def test_invalid_uploads(payload,suffix):
     with pytest.raises((ValueError,pd.errors.ParserError)):
