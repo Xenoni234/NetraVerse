@@ -35,6 +35,7 @@ from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
 
 CKPT = ROOT / "models/wm_final/best.ckpt"
 BENCH = ROOT / "models/wm_final/benchmark.json"
+GENERALIZATION = ROOT / "models/wm_final/generalization.json"
 
 # our stage id -> frontend stage label
 STAGE_UI = {0: "BENIGN", 1: "RECONNAISSANCE", 2: "INITIAL ACCESS", 3: "LATERAL MOVEMENT",
@@ -323,9 +324,16 @@ def evaluation():
         def m(r):
             return None if not r else {"prauc": r["pr_auc"][i], "f1": r["f1"][i], "fpr": r["fpr"][i]}
         rows.append({"horizon": hz, "worldModel": m(wm), "baseline": m(lr)})
-    return {"by_horizon": rows, "takeaway": b.get("takeaway", ""),
-            "generalization": [
-                {"setting": "In-distribution (held-out time)", "result": "World model beats persistence and LR at every horizon (see benchmark)."},
-                {"setting": "Held-out attack family", "result": "Not yet measured in this build."},
-                {"setting": "Cross-dataset", "result": "Trained on CIC-IDS2017/2018 + CTU-13; external cross-dataset test not yet run."},
-            ]}
+    gen_default = [
+        {"setting": "In-distribution (held-out time)", "result": "World model beats persistence and LR at every horizon (see benchmark)."},
+        {"setting": "Held-out attack family", "result": "Not yet measured in this build."},
+        {"setting": "Cross-dataset", "result": "Trained on CIC-IDS2017/2018 + CTU-13; external cross-dataset test not yet run."},
+    ]
+    gen = gen_default
+    if GENERALIZATION.exists():
+        try:
+            g = json.loads(GENERALIZATION.read_text(encoding="utf-8"))
+            gen = g.get("rows", g) if isinstance(g, (dict, list)) else gen_default
+        except (ValueError, OSError):
+            gen = gen_default
+    return {"by_horizon": rows, "takeaway": b.get("takeaway", ""), "generalization": gen}

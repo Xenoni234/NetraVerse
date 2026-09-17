@@ -76,7 +76,45 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                     help="per-scenario row cap for CTU-13")
     ap.add_argument("--seed", type=int, default=1337)
     ap.add_argument("--run-name", type=str, default="wm_cicids2017")
+    # ---- generalization ablations (CLAUDE.md §9 required rows) ----
+    ap.add_argument("--held-out-family", type=str, default=None,
+                    help="exclude this attack_family from train/val; test on it only (unseen-family generalization)")
+    ap.add_argument("--flow-only", action="store_true",
+                    help="zero the 9 packet-derived features so the model sees flow features only (packet-feature ablation)")
+    ap.add_argument("--shuffle-history", action="store_true",
+                    help="randomly permute the L history windows per sequence (control: proves the model reads temporal dynamics, not a static host fingerprint)")
+    ap.add_argument("--metrics-out", type=Path, default=None,
+                    help="write the world-model TEST metrics for this run to this JSON path (for the generalization runner)")
+    ap.add_argument("--label", type=str, default=None, help="human label recorded in --metrics-out")
     return ap.parse_args(argv)
+
+
+#: The 9 packet-derived features (subset of MODEL_COLUMNS) zeroed by --flow-only.
+PACKET_DERIVED_FEATURES = (
+    "mean_fwd_pkt_len", "mean_bwd_pkt_len", "pkt_len_var", "mean_fwd_iat_s",
+    "mean_bwd_iat_s", "mean_init_win_fwd", "mean_init_win_bwd", "active_s", "idle_s",
+)
+
+
+def _zero_packet_features(batch):
+    """Zero the packet-derived columns in a SequenceBatch's x/future (flow-only ablation)."""
+    if batch is None:
+        return None
+    idx = [i for i, c in enumerate(W.MODEL_COLUMNS) if c in PACKET_DERIVED_FEATURES]
+    if idx:
+        batch.x[..., idx] = 0.0
+        if getattr(batch, "future", None) is not None and batch.future.size:
+            batch.future[..., idx] = 0.0
+    return batch
+
+
+def _shuffle_history(batch, rng):
+    """Permute the L (history) axis of each sequence independently (temporal control)."""
+    if batch is None:
+        return None
+    for i in range(batch.x.shape[0]):
+        batch.x[i] = batch.x[i][rng.permutation(batch.x.shape[1])]
+    return batch
 
 
 def set_seed(seed: int) -> None:
@@ -241,12 +279,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Chronological split on the WINDOWS (per campaign), then sequence each split
     # separately so no sequence crosses a split boundary.
     cfg = S.SplitConfig(time_col="window_start", family_col="attack_family",
-                        whole_campaign=args.whole_campaign)
+                        whole_campaign=args.whole_campaign,
+                        held_out_family=args.held_out_family)
+    if args.held_out_family:
+        print(f"[ablation] held-out attack family: {args.held_out_family!r} (excluded from train/val)")
     parts = S.chronological_split(windows, config=cfg, verbose=True)
 
     seq_cfg = W.WindowConfig(history_length=args.history_length,
                             min_windows_per_entity=args.history_length + max(W.HORIZONS))
     seq = {name: sequences_for_split(fr, args.target, seq_cfg) for name, fr in parts.items()}
+    if args.flow_only:
+        print("[ablation] flow-only: zeroing packet-derived features")
+        seq = {name: _zero_packet_features(b) for name, b in seq.items()}
+    if args.shuffle_history:
+        print("[ablation] shuffle-history: permuting the L history axis per sequence")
+        _rng = np.random.default_rng(args.seed)
+        seq = {name: _shuffle_history(b, _rng) for name, b in seq.items()}
     for name in ("train", "val", "test"):
         b = seq[name]
         print(f"  {name}: {0 if b is None else b.x.shape[0]:,} sequences")
@@ -312,7 +360,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"\n[eval] threshold={threshold:.4f} (val-selected) — TEST results:")
 
     tp, tt, _, _ = predict_probs(model, test_loader, device)
-    evaluate("WORLD MODEL", tp, tt, threshold, horizons)
+    wm_rows = evaluate("WORLD MODEL", tp, tt, threshold, horizons)
+
+    if args.metrics_out is not None:
+        def _num(v):  # coerce NaN/inf to None so the JSON stays valid & parseable
+            v = float(v)
+            return None if (v != v or v in (float("inf"), float("-inf"))) else round(v, 4)
+        payload = {
+            "label": args.label or args.run_name,
+            "held_out_family": args.held_out_family,
+            "flow_only": bool(args.flow_only),
+            "shuffle_history": bool(args.shuffle_history),
+            "threshold": round(float(threshold), 4),
+            "n_test_sequences": int(len(tt)),
+            "n_test_positives": [int((tt[:, i] > 0.5).sum()) for i in range(len(horizons))],
+            "horizons": [f"+{k*30}s" for k in horizons],
+            "pr_auc": [_num(wm_rows[k]["pr_auc"]) for k in horizons],
+            "f1": [_num(wm_rows[k]["f1"]) for k in horizons],
+            "fpr": [_num(wm_rows[k]["fpr"]) for k in horizons],
+        }
+        args.metrics_out.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"[metrics] wrote {args.metrics_out}")
 
     # Persistence baseline: future risk = last observed window's label. For the
     # onset task this is ~all-zero (benign origins) -> it structurally cannot

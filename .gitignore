@@ -33,6 +33,11 @@ dist/
 !models/wm_final/
 !models/wm_final/best.ckpt
 !models/wm_final/benchmark.json
+!models/wm_final/generalization.json
+# ablation scratch (retrained per-run checkpoints + temp metrics) — never commit
+/models/_ablations/
+/models/wm_ablate_*/
+/models/wm_smoke_*/
 /models/wm_improved/
 !/models/wm_repaired/
 /models/wm_repaired/*
