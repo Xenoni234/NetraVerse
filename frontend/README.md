@@ -32,9 +32,18 @@ panel using real model output, with the Stitch design preserved below.
   metrics + generalization.
 - **Model** - model card from the checkpoint.
 
+## No hardcoded data
+Every page's `<main>` is a single mount (`#nv-root`); `public/api.js` renders all content from the
+backend (real world-model output). There are no fixtures in the rendered UI — numbers, tables,
+charts, stages and the plain-language read-out all come from a model call. The Stitch shell (sidebar,
+header, design tokens) is preserved; the header clock is a live UTC clock, not a baked-in timestamp.
+
 ## Honest gaps
-- Packet-only features the UI mentions (TTL, retransmission, burstiness, periodicity) are not in the
-  CSV-trained model; they are shown as unavailable rather than fabricated. Held-out-family and
-  external cross-dataset metrics are marked "not yet measured".
-- The live data is rendered in panels styled to the shared shell (`public/app-shell.css`); the full
-  in-place rewrite of every Stitch page to one pixel-level design system is an ongoing polish pass.
+- The model uses 9 **packet-derived** features (packet lengths, IATs, init windows, active/idle),
+  computed by CICFlowMeter for both CSV and PCAP uploads — these appear in the Investigate SHAP view.
+  Extra packet-only signals (TTL, retransmission, fragmentation, C2 beaconing) are **not** model
+  inputs and are not displayed anywhere, so nothing is fabricated.
+- Generalization (held-out attack family, flow-only ablation, shuffled-history control) is measured
+  by `scripts/run_generalization.py`, which writes `models/wm_final/generalization.json`; the Validate
+  page shows those real numbers when present and an honest "not yet measured" otherwise. External
+  cross-dataset (e.g. UNSW-NB15) is still not run.
