@@ -60,6 +60,9 @@ class Forecaster:
         stage = out["stage_logits"].argmax(-1).cpu().numpy()
 
         result = {"risk": risk, "stage": stage}
+        # temporal attention over the L history windows (explainability): (N, K, L)
+        if "attn_weights" in out:
+            result["attn"] = out["attn_weights"].cpu().numpy()
 
         if mc_samples and mc_samples > 0:
             self.model.enable_mc_dropout()
@@ -111,6 +114,8 @@ class Forecaster:
             if "risk_lo" in out:
                 rows[f"risk_lo_k{k}"] = out["risk_lo"][:, i]
                 rows[f"risk_hi_k{k}"] = out["risk_hi"][:, i]
+            if "attn" in out:   # per-row (L,) attention over history windows
+                rows[f"attn_k{k}"] = list(out["attn"][:, i, :])
         return rows
 
     def _forecast_masked_timeline(self, g: pd.DataFrame, *, mc_samples: int = 0) -> pd.DataFrame:
