@@ -81,4 +81,22 @@
     const route = window.location.pathname.split("/").filter(Boolean)[0];
     return pages[route] ? route : Object.entries(pages).find(([, href]) => href === window.location.pathname)?.[0] || "home";
   }
+
+  // Replace any hardcoded header clock ("2024-10-24 14:32:10 UTC", "SYNC: 14:22:08 UTC",
+  // "10:30:00 UTC") with the real current time, ticking live. No fabricated timestamps.
+  (function liveClock() {
+    const clockRe = /(SYNC:\s*)?\d{2,4}[-:]\d{2}([-:]\d{2})?([ T]\d{2}:\d{2}:\d{2})?\s*UTC/;
+    const targets = [];
+    document.querySelectorAll("span,div,time").forEach((el) => {
+      if (el.children.length === 0 && clockRe.test(el.textContent.trim())) {
+        targets.push({ el, prefix: /^SYNC:/.test(el.textContent.trim()) ? "SYNC: " : "" });
+      }
+    });
+    if (!targets.length) return;
+    const tick = () => {
+      const s = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+      targets.forEach((t) => { t.el.textContent = t.prefix + s; });
+    };
+    tick(); setInterval(tick, 1000);
+  })();
 })();

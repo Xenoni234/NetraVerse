@@ -125,7 +125,35 @@ def _timeline_payload(host: pd.DataFrame, *, known: bool, mc: int = 0) -> dict:
     alert = first_sustained(tl, "risk_k4", thr)
     lead = lead_time_seconds(tl, horizon_key="risk_k4", threshold=thr) if known else None
     peak = tl.loc[tl.risk_k4.idxmax()]
+
+    # Plain-language summary (calculation-based, not templated fiction): describes the
+    # current window, the K-step trajectory, and the model's confidence/uncertainty.
+    peak_stage = STAGE_UI.get(int(peak.stage_k4), "UNMAPPED")
+    trend = steps[-1]["risk"] - steps[0]["risk"]
+    direction = ("rising" if trend > 0.02 else "falling" if trend < -0.02 else "flat")
+    over = float(peak.risk_k4) >= float(thr)
+    now_txt = (f"Peak forecast risk for this host is {peak.risk_k4*100:.1f}% "
+               f"at {_iso(peak.window_start)[11:19]} UTC, "
+               f"{'above' if over else 'below'} the {thr:.3f} alert threshold.")
+    next_txt = (f"Over the next 120 s the model forecasts a {direction} trajectory "
+                f"({steps[0]['risk']*100:.1f}% → {steps[-1]['risk']*100:.1f}%), "
+                f"with predicted stage {peak_stage}.")
+    if known:
+        unc_txt = ("An attack is recorded in this capture; "
+                   + (f"the model first alerts {abs(lead):.0f} s before onset."
+                      if lead is not None and lead > 0
+                      else f"the model alerts {abs(lead):.0f} s after onset."
+                      if lead is not None and lead < 0
+                      else "the model alerts at onset." if alert
+                      else "the model does not raise a sustained alert."))
+    else:
+        band = steps[-1].get("uncertainty")
+        unc_txt = ("This is an uploaded capture with no ground-truth labels; values are model "
+                   "predictions" + (f" (±{band*100:.1f}% MC-dropout band at +120 s)." if band else "."))
+    plain_language = {"now": now_txt, "next": next_txt, "uncertainty": unc_txt,
+                      "trend": direction, "over_threshold": over}
     return {
+        "plain_language": plain_language,
         "threshold": round(float(thr), 4),
         "observed": observed,
         "forecast": steps,
