@@ -1,0 +1,42 @@
+{
+  "generated": "2026-09-18 00:49:02",
+  "reference_prauc": [
+    0.077,
+    0.071,
+    0.079
+  ],
+  "note": "complete",
+  "rows": [
+    {
+      "setting": "In-distribution (held-out time)",
+      "result": "World model beats persistence and LR at every horizon (PR-AUC 0.077 / 0.071 / 0.079)."
+    },
+    {
+      "setting": "Ordered vs shuffled history (control)",
+      "result": "With the 10-window history randomly permuted, PR-AUC drops to 0.006 / 0.011 / 0.014 \u2014 the model reads temporal dynamics, not a static host fingerprint.",
+      "pr_auc": [
+        0.0065,
+        0.0107,
+        0.0136
+      ]
+    },
+    {
+      "setting": "Flow-only features (no packet-derived)",
+      "result": "Zeroing the 9 packet-derived features gives PR-AUC 0.001 / 0.002 / 0.003 vs 0.077 / 0.071 / 0.079 with them.",
+      "pr_auc": [
+        0.0008,
+        0.0017,
+        0.0025
+      ]
+    },
+    {
+      "setting": "Held-out attack family (Infiltration)",
+      "result": "Trained with Infiltration excluded; tested only on it (positives [3, 5, 7]): PR-AUC 0.049 / 0.067 / 0.101.",
+      "pr_auc": [
+        0.0487,
+        0.067,
+        0.1008
+      ]
+    }
+  ]
+}

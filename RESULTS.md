@@ -51,6 +51,24 @@ rare events), with F1 and false-positive rate.
   fan-out and flow-rate all climb 2–5× in the windows before an attack) — so the signal exists; there
   are just few labelled onset events to train on.
 
+## Generalization ablations (measured 2026-09-18, `scripts/run_generalization.py`)
+
+Full retrains on the wm_final data config (CIC-IDS2017 all days + CIC-IDS2018 IP day + CTU-13),
+each changing exactly one thing. PR-AUC at +30 / +60 / +120 s; served live on the Validate page via
+`models/wm_final/generalization.json`.
+
+| Setting | PR-AUC (+30/+60/+120) | Reading |
+|---|---|---|
+| In-distribution (reference) | 0.077 / 0.071 / 0.079 | the deployed model |
+| Ordered → **shuffled history** (control) | 0.006 / 0.011 / 0.014 | collapses — the model reads temporal dynamics, not a static host fingerprint |
+| **Flow-only** (9 packet-derived features zeroed) | 0.001 / 0.002 / 0.003 | the packet-derived features carry almost all the signal |
+| **Held-out family** (Infiltration excluded, tested only on it) | 0.049 / 0.067 / 0.101 | holds up on an unseen family — but only 3/5/7 test positives, so treat as indicative, not precise |
+
+Honest notes: the shuffled-history control is the strongest result (CLAUDE.md §9 "ordered vs shuffled"
+row) — it directly rebuts the "it's just memorising the host" critique. The held-out-family test set is
+tiny (few Infiltration onsets survive windowing), so its numbers are noisy. External cross-dataset
+(UNSW-NB15) is still not run.
+
 ## What did NOT help (recorded so we don't repeat it)
 
 | Lever | Outcome |
