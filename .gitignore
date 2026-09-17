@@ -32,6 +32,7 @@ dist/
 !models/
 !models/wm_final/
 !models/wm_final/best.ckpt
+!models/wm_final/benchmark.json
 /models/wm_improved/
 !/models/wm_repaired/
 /models/wm_repaired/*

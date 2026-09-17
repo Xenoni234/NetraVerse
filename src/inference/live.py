@@ -71,17 +71,25 @@ def _detect_map(columns: list[str]) -> tuple[str, dict]:
     return best_name, best
 
 
-def load_live_flows(path: Path | str, *, campaign_id: str = "live") -> pd.DataFrame:
+def load_live_flows(
+    path: Path | str, *, campaign_id: str = "live", return_report: bool = False
+):
     """Read CICFlowMeter CSV(s) into a unified, unlabelled flow frame.
+
+    Cleans the uploaded/live capture before it reaches the model: drops fully-empty
+    rows and exact-duplicate flows, coerces features to numeric, imputes non-finite
+    values (inf/NaN -> 0), and drops rows with an unparseable timestamp or missing
+    source IP. With ``return_report=True`` it also returns a plain dict of what it
+    cleaned (row counts per step), for display in the demo.
 
     Args:
         path: a CICFlowMeter CSV file, or a directory of them.
         campaign_id: label for this capture session.
+        return_report: when True, return ``(frame, report)`` instead of just the frame.
 
     Returns:
-        Unified flow frame (timestamp, src_ip, dst_ip, dst_port, protocol, the
-        flow features, + placeholder binary_label/attt_stage) ready for
-        :func:`src.data.windowing.build_windows`.
+        Unified flow frame ready for :func:`src.data.windowing.build_windows`, or
+        ``(frame, report)`` when ``return_report``.
     """
     path = Path(path)
     files = sorted(path.glob("*.csv")) if path.is_dir() else [path]
@@ -96,6 +104,12 @@ def load_live_flows(path: Path | str, *, campaign_id: str = "live") -> pd.DataFr
         df = df.loc[:, ~pd.Index(df.columns).duplicated()]
         frames.append(df)
     raw = pd.concat(frames, ignore_index=True)
+    report = {"rows_read": int(len(raw))}
+
+    # drop fully-empty rows (all cells NaN) - a common trailing-record artefact
+    empty_mask = raw.isna().all(axis=1)
+    report["empty_dropped"] = int(empty_mask.sum())
+    raw = raw.loc[~empty_mask]
 
     name, cmap = _detect_map(list(raw.columns))
     hits = sum(1 for src in cmap if src in set(raw.columns))
@@ -109,33 +123,48 @@ def load_live_flows(path: Path | str, *, campaign_id: str = "live") -> pd.DataFr
     # drop any duplicate unified names created by the rename
     work = work.loc[:, ~pd.Index(work.columns).duplicated()]
 
+    # drop exact-duplicate flow rows
+    before = len(work)
+    work = work.drop_duplicates()
+    report["duplicates_dropped"] = int(before - len(work))
+
     # numeric coercion for features; fill any feature the tool didn't emit with 0
     for col in FLOW_FEATURE_COLUMNS:
         if col in work.columns:
             work[col] = pd.to_numeric(work[col], errors="coerce")
         else:
             work[col] = 0.0
-    work[list(FLOW_FEATURE_COLUMNS)] = (
-        work[list(FLOW_FEATURE_COLUMNS)].replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    )
+    feat = work[list(FLOW_FEATURE_COLUMNS)]
+    nonfinite = int((~np.isfinite(feat.to_numpy(dtype="float64"))).sum())
+    report["nonfinite_imputed"] = nonfinite
+    report["nonfinite_pct"] = round(100.0 * nonfinite / max(feat.size, 1), 3)
+    work[list(FLOW_FEATURE_COLUMNS)] = feat.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     if "timestamp" not in work.columns:
         raise ValueError("Live flows have no Timestamp column; CICFlowMeter must emit one.")
     work["timestamp"] = _parse_timestamps(work["timestamp"])
+    before = len(work)
     work = work[work["timestamp"].notna()].copy()
+    report["bad_timestamp_dropped"] = int(before - len(work))
 
     if "src_ip" not in work.columns:
         raise ValueError(
             "Live flows have no source IP — per-host forecasting needs it. Ensure "
             "CICFlowMeter emits Src IP (run it on the raw interface, not an aggregated feed)."
         )
+    before = len(work)
+    work = work[work["src_ip"].notna()].copy()
+    report["missing_src_ip_dropped"] = int(before - len(work))
 
     work["campaign_id"] = campaign_id
     work["dataset"] = name
     # placeholders so build_windows runs on unlabelled live data
     work["binary_label"] = np.int8(0)
     work["attt_stage"] = np.int64(0)
-    return work.sort_values("timestamp", kind="mergesort").reset_index(drop=True)
+    out = work.sort_values("timestamp", kind="mergesort").reset_index(drop=True)
+    report["flows_kept"] = int(len(out))
+    report["column_map"] = name
+    return (out, report) if return_report else out
 
 
 def live_windows(path: Path | str, *, campaign_id: str = "live") -> pd.DataFrame:

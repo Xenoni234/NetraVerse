@@ -1,0 +1,11 @@
+{
+  "source": "RESULTS.md wm_final (corrected clock; CIC-IDS2017 all days + CIC-IDS2018 IP-day + CTU-13)",
+  "metric_note": "Test split. PR-AUC and F1 higher is better; FPR lower is better.",
+  "horizons": ["+30 s", "+60 s", "+120 s"],
+  "rows": [
+    {"model": "World model",         "pr_auc": [0.077, 0.071, 0.079], "f1": [0.087, 0.136, 0.128], "fpr": [0.005, 0.006, 0.007]},
+    {"model": "Persistence",         "pr_auc": [0.000, 0.001, 0.001], "f1": [0.000, 0.000, 0.000], "fpr": [0.000, 0.000, 0.000]},
+    {"model": "Logistic regression", "pr_auc": [0.030, 0.032, 0.033], "f1": [0.001, 0.002, 0.003], "fpr": [0.244, 0.500, 0.482]}
+  ],
+  "takeaway": "Beats persistence and logistic regression at every horizon; logistic regression fires on 24-50% of benign traffic, the world model on ~0.5-0.7%."
+}

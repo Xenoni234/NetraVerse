@@ -12,9 +12,9 @@ import time
 import numpy as np
 import pandas as pd
 
-from src.data.windowing import MODEL_COLUMNS
+from src.data.windowing import MODEL_COLUMNS, build_windows
 from src.data.unified_schema import FLOW_FEATURE_COLUMNS
-from src.inference.live import _detect_map, live_windows
+from src.inference.live import _detect_map, load_live_flows
 
 PACKET_FEATURES = (
     'mean_fwd_pkt_len', 'mean_bwd_pkt_len', 'pkt_len_var', 'mean_fwd_iat_s',
@@ -217,7 +217,8 @@ def ingest_upload(payload, suffix):
         header = [str(c).strip() for c in pd.read_csv(csv, nrows=0).columns]
         kind, mapping = _detect_map(header)
         available = {mapping[c] for c in header if c in mapping}
-        windows = live_windows(csv)
+        flows, cleaning = load_live_flows(csv, return_report=True)
+        windows = build_windows(flows)
         if windows.empty:
             raise ValueError('No usable timestamped host windows were found.')
         missing = [c for c in MODEL_COLUMNS if c not in windows]
@@ -226,7 +227,12 @@ def ingest_upload(payload, suffix):
         values = windows[list(MODEL_COLUMNS)].to_numpy(dtype=float)
         if not np.isfinite(values).all():
             raise ValueError('Non-finite model features were produced.')
+        catalog = host_catalog(windows)
+        cleaning['windows_built'] = int(len(windows))
+        cleaning['hosts'] = int(windows.entity_id.nunique())
+        cleaning['hosts_with_history'] = int((catalog.forecasts > 0).sum())
         audit = {'column_map': kind, 'model_columns': len(MODEL_COLUMNS), 'finite': True,
+                 'cleaning': cleaning,
                  'nonzero_columns': int(np.any(values != 0, axis=0).sum()),
                  'all_zero_columns': [c for c, populated in zip(MODEL_COLUMNS, np.any(values != 0, axis=0)) if not populated],
                  'missing_source_fields': sorted(set(FLOW_FEATURE_COLUMNS)-available),
