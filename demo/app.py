@@ -337,7 +337,7 @@ def main():
             else:
                 eligible=attacked
         else:
-            st.caption('Local-only processing. Max 200 MB; five-minute conversion timeout. CSV, PCAP, PCAPNG. '
+            st.caption('Local-only processing. Max 2 GB; five-minute conversion timeout. CSV, PCAP, PCAPNG. '
                        'Files are removed after processing; labels are unknown.')
             upload=st.file_uploader('Capture file',type=['csv','pcap','pcapng'])
             if upload is None:

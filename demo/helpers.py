@@ -204,8 +204,8 @@ def convert_capture(source, destination, timeout=300):
 def ingest_upload(payload, suffix):
     if not payload:
         raise ValueError('The uploaded file is empty.')
-    if len(payload) > 200 * 1024 * 1024:
-        raise ValueError('The upload exceeds 200 MB.')
+    if len(payload) > 2 * 1024 * 1024 * 1024:
+        raise ValueError('The upload exceeds 2 GB.')
     if suffix not in {'.csv', '.pcap', '.pcapng'}:
         raise ValueError('Choose a CSV, PCAP or PCAPNG file.')
     with tempfile.TemporaryDirectory(prefix='wm-demo-') as directory:

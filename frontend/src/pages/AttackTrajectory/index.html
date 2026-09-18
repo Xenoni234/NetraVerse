@@ -1,186 +1,79 @@
 <!DOCTYPE html>
-
 <html lang="en"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <style>
-    @layer base {
-      html, body { margin: 0; padding: 0; }
-      body { overscroll-behavior: none; }
-      main > :first-child { margin-top: 0 !important; }
-      main > :last-child { margin-bottom: 0 !important; }
-    }
-    ::-webkit-scrollbar { display: none; }
+    @layer base { html, body { margin: 0; padding: 0; } body { overscroll-behavior: none; } }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
   </style>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <script id="tailwind-config">
     tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "on-primary": "#ffffff",
-            "surface-container-highest": "#e2e8f0",
-            "primary-fixed": "#cce5ff",
-            "tertiary-fixed-dim": "#ffb77d",
-            "tertiary-container": "#fff7ed",
-            "background": "#faf8ff",
-            "on-surface": "#0f172a",
-            "primary": "#0284c7",
-            "surface-tint": "#0284c7",
-            "secondary-fixed": "#ccfbf1",
-            "error-container": "#fef2f2",
-            "surface": "#ffffff",
-            "on-secondary-fixed": "#00201d",
-            "surface-variant": "#f1f5f9",
-            "on-primary-fixed": "#001d31",
-            "on-error-container": "#991b1b",
-            "on-error": "#ffffff",
-            "on-tertiary-container": "#9a3412",
-            "on-tertiary-fixed": "#2f1500",
-            "on-surface-variant": "#64748b",
-            "secondary-fixed-dim": "#5eead4",
-            "surface-container-low": "#f8fafc",
-            "on-secondary-fixed-variant": "#005049",
-            "on-secondary-container": "#115e59",
-            "surface-container": "#f1f5f9",
-            "outline-variant": "#e2e8f0",
-            "tertiary": "#ea580c",
-            "on-primary-fixed-variant": "#0369a1",
-            "on-tertiary": "#ffffff",
-            "inverse-primary": "#93ccff",
-            "primary-fixed-dim": "#93ccff",
-            "secondary": "#0d9488",
-            "outline": "#94a3b8",
-            "on-secondary": "#ffffff",
-            "on-primary-container": "#ffffff",
-            "on-tertiary-fixed-variant": "#6e3900",
-            "primary-container": "#0369a1",
-            "on-background": "#0f172a",
-            "tertiary-fixed": "#ffedd5",
-            "inverse-on-surface": "#eef0ff",
-            "inverse-surface": "#1e293b",
-            "surface-bright": "#ffffff",
-            "surface-dim": "#cbd5e1",
-            "surface-container-high": "#e2e8f0",
-            "surface-container-lowest": "#ffffff",
-            "secondary-container": "#f0fdfa",
-            "error": "#dc2626"
-          },
-          borderRadius: {
-            "DEFAULT": "0.25rem",
-            "lg": "0.375rem",
-            "xl": "0.5rem",
-            "full": "9999px"
-          },
-          fontFamily: {
-            "code-sm": ["JetBrains Mono", "monospace"],
-            "headline-sm": ["IBM Plex Sans", "sans-serif"],
-            "body-lg": ["IBM Plex Sans", "sans-serif"],
-            "headline-md": ["IBM Plex Sans", "sans-serif"],
-            "body-md": ["IBM Plex Sans", "sans-serif"],
-            "headline-lg": ["IBM Plex Sans", "sans-serif"],
-            "label-sm": ["IBM Plex Sans", "sans-serif"],
-            "body-sm": ["IBM Plex Sans", "sans-serif"],
-            "headline-xl": ["IBM Plex Sans", "sans-serif"],
-            "code-lg": ["JetBrains Mono", "monospace"],
-            "label-md": ["IBM Plex Sans", "sans-serif"],
-            "code-md": ["JetBrains Mono", "monospace"]
-          }
-        }
-      }
-    };
+      theme: { extend: {
+        colors: { "primary": "#0284c7", "background": "#f8fafc", "on-surface": "#0f172a", "on-surface-variant": "#475569" },
+        fontFamily: { "sans": ["IBM Plex Sans", "sans-serif"], "mono": ["IBM Plex Mono", "JetBrains Mono", "monospace"] }
+      } }
+    }
   </script>
 </head>
-<body class="bg-background font-body-md text-body-md text-on-surface antialiased min-h-screen">
-<!-- LEFT SIDEBAR (240px wide) -->
-<aside class="fixed left-0 top-0 h-full w-[240px] bg-surface-container-lowest border-r border-outline-variant z-50 flex flex-col justify-between select-none">
+<body class="bg-[#f8fafc] font-sans text-slate-900 antialiased min-h-screen flex">
+<!-- PERSISTENT LEFT SIDEBAR -->
+<aside class="fixed left-0 top-0 h-screen w-[236px] bg-white border-r border-slate-200 z-50 flex flex-col justify-between select-none">
 <div class="flex flex-col">
-<div class="h-14 px-5 border-b border-outline-variant flex flex-col justify-center bg-surface-container-lowest">
-<div class="font-label-sm text-xs uppercase tracking-wider text-primary font-bold truncate">Network Attack Forecasting</div>
-<div class="font-code-sm text-[11px] text-on-surface-variant">SIH26153 / NTRO</div>
+<!-- Brand -->
+<div class="h-14 px-4 flex flex-col justify-center border-b border-slate-200">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 bg-[#0284c7]"></span>
+<span class="font-mono text-[11px] font-semibold tracking-wider text-slate-900 uppercase">Network Attack</span>
 </div>
-<nav class="flex flex-col py-3">
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="home" href="#">
-<span class="font-code-sm text-xs text-outline">01</span><span>Home</span>
-</a>
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="simulate" href="#">
-<span class="font-code-sm text-xs text-outline">02</span><span>Simulate</span>
-</a>
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="forecast" href="#">
-<span class="font-code-sm text-xs text-outline">03</span><span>Forecast</span>
-</a>
-<!-- ACTIVE ITEM: ATT&CK -->
-<a class="flex items-center gap-3 px-5 py-2 bg-sky-50 text-primary font-medium text-sm transition-colors border-l-2 border-primary" data-path="attack" href="#">
-<span class="font-code-sm text-xs text-primary font-semibold">04</span><span class="font-medium">ATT&amp;CK</span>
-</a>
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="investigate" href="#">
-<span class="font-code-sm text-xs text-outline">05</span><span>Investigate</span>
-</a>
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="network" href="#">
-<span class="font-code-sm text-xs text-outline">06</span><span>Network</span>
-</a>
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="validate" href="#">
-<span class="font-code-sm text-xs text-outline">07</span><span>Validate</span>
-</a>
-<a class="flex items-center gap-3 px-5 py-2 text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface text-sm transition-colors border-l-2 border-transparent" data-path="model" href="#">
-<span class="font-code-sm text-xs text-outline">08</span><span>Model</span>
-</a>
+<span class="font-mono text-[11px] font-semibold tracking-wider text-[#0284c7] uppercase mt-0.5">Forecasting</span>
+</div>
+<!-- Navigation -->
+<div class="px-4 pt-3 pb-1"><span class="text-[10px] font-mono tracking-widest text-slate-400 uppercase">Navigation</span></div>
+<nav class="flex flex-col space-y-0.5 px-2 font-mono text-[12px]">
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/home"><span class="text-slate-400">01</span><span>Home</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/simulate"><span class="text-slate-400">02</span><span>Simulate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/forecast"><span class="text-slate-400">03</span><span>Forecast</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/attack"><span class="text-slate-400">04</span><span>ATT&amp;CK</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/investigate"><span class="text-slate-400">05</span><span>Investigate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/network"><span class="text-slate-400">06</span><span>Network</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/validate"><span class="text-slate-400">07</span><span>Validate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/model"><span class="text-slate-400">08</span><span>Model</span></a>
 </nav>
 </div>
-<div class="p-4 border-t border-outline-variant bg-surface-container-lowest font-code-sm text-xs space-y-2 text-on-surface-variant">
-<div class="flex justify-between items-center">
-<span class="text-outline">MODE:</span>
-<span class="text-on-surface font-medium">Offline Replay</span>
-</div>
-<div class="flex justify-between items-center">
-<span class="text-outline">DATA:</span>
-<span class="text-on-surface font-medium">Network Telemetry</span>
-</div>
-<div class="flex items-center gap-2 pt-2 border-t border-outline-variant">
-<span class="inline-block w-2 h-2 rounded-full bg-secondary"></span>
-<span class="text-[11px] text-secondary font-semibold uppercase tracking-wider">Telemetry Active</span>
-</div>
+<!-- Pinned bottom -->
+<div class="p-4 border-t border-slate-200 bg-slate-50/60 font-mono text-[11px] text-slate-600 space-y-1.5">
+<div class="flex items-center justify-between"><span class="text-slate-400 uppercase tracking-wider text-[10px]">Mode</span><span class="text-slate-800 font-medium">Offline Replay</span></div>
+<div class="flex items-center justify-between"><span class="text-slate-400 uppercase tracking-wider text-[10px]">Data</span><span id="nv-side-data" class="text-slate-800 font-medium truncate max-w-[120px]">World Model</span></div>
+<div id="nv-side-status" class="flex items-center gap-1.5 pt-1 text-slate-500"><span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span><span class="font-mono text-[10px] uppercase tracking-wider font-semibold">Connecting…</span></div>
 </div>
 </aside>
-<!-- MAIN WRAPPER -->
-<div class="pl-[240px]">
-<!-- TOP HEADER -->
-<header class="fixed top-0 left-[240px] right-0 h-14 bg-surface-container-lowest border-b border-outline-variant z-40 px-8 flex items-center justify-between">
-<div class="flex items-center gap-4 text-xs font-code-sm divide-x divide-outline-variant">
-<div class="font-semibold text-on-surface tracking-tight uppercase font-body-md text-sm">
-          Network Attack Forecasting
-        </div>
-<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
-<span class="text-outline uppercase">Scenario:</span>
-<span class="text-on-surface font-medium">CSE-CIC-IDS2018 · Port Scan</span>
+<!-- MAIN CONTAINER -->
+<div class="pl-[236px] min-h-screen flex-1 flex flex-col">
+<!-- HEADER -->
+<header class="fixed top-0 left-[236px] right-0 h-14 bg-white border-b border-slate-200 z-40 flex items-center justify-between gap-4">
+<div class="flex items-center gap-3 shrink-0">
+<span class="font-mono text-[13px] font-semibold text-slate-900 tracking-tight uppercase">Network Attack Forecasting</span>
 </div>
-<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
-<span class="text-outline uppercase">Host:</span>
-<span class="text-on-surface font-medium">172.31.64.14</span>
-</div>
-<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
-<span class="text-outline uppercase">Current window:</span>
-<span class="text-on-surface font-medium">10:30:00 UTC</span>
-</div>
-<div class="pl-4 flex items-center gap-1.5 text-on-surface-variant">
-<span class="text-outline uppercase">Horizon:</span>
-<span class="text-primary font-semibold">+120s</span>
-</div>
-</div>
-<div class="flex items-center gap-3">
-<span class="px-2.5 py-0.5 rounded text-xs font-code-sm bg-surface-container text-on-surface-variant border border-outline-variant uppercase">
-          Offline Replay
-        </span>
-<div class="w-8 h-8 rounded-full bg-slate-100 border border-outline-variant flex items-center justify-center text-on-surface-variant">
-<span class="material-symbols-outlined text-[18px]">person</span>
-</div>
+<div id="nv-ctx">
+<span class="kv"><span class="k">Scenario</span><span class="v" id="nv-ctx-scenario">—</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Host</span><span class="v" id="nv-ctx-host">—</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Horizon</span><span class="v accent" id="nv-ctx-horizon">+120s</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Mode</span><span class="v teal" id="nv-ctx-mode">Offline Replay</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="v" id="nv-ctx-clock">00:00:00 UTC</span></span>
 </div>
 </header>
-<!-- CONTENT AREA -->
-<main class="relative pt-14 w-full px-8 py-7">
+<!-- CONTENT -->
+<main class="flex-1 bg-[#f8fafc]">
   <div id="nv-root"></div>
 </main>
 </div>

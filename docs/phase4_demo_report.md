@@ -17,7 +17,7 @@ The benchmark text attributes the PR-AUC/F1 comparison to the recorded `wm_final
 | `demo/app.py` | Offline controls, resource/session caches, real model charts, tables and explanations. |
 | `demo/helpers.py` | Consecutive-history selection, benign references, feature audit, safe temporary ingestion, converter compatibility and alert/label helpers. |
 | `demo/requirements.txt` | Pins the demo converter to `cicflowmeter==0.5.0`. |
-| `.streamlit/config.toml` | Localhost binding, dark theme, 200 MB upload limit and disabled telemetry. |
+| `.streamlit/config.toml` | Localhost binding, dark theme, 2 GB upload limit and disabled telemetry. |
 | `src/inference/live.py` | Adds only the nine authorized column-map entries below. |
 | `tests/test_demo.py` | History isolation, scaling/inference/SHAP agreement, attention, alert timing, input errors and real converter smoke tests. |
 | `docs/phase4_demo_report.md` | This handoff report. |
@@ -77,7 +77,7 @@ Set-Location E:\Netraverse\sih26153-world-model
 .\.venv\Scripts\python.exe -m streamlit run demo/app.py --server.headless true
 ```
 
-Open `http://127.0.0.1:8501`. Choose **Dataset replay**, then campaign and host. For **Upload capture**, select a CSV/PCAP/PCAPNG file using the same app. Maximum 200 MB. The public verification capture is `data/demo_verification/http.pcap`; its PCAPNG representation is `http.pcapng`. A full real upload example already on this machine is `data/live/server_attack.csv`. These ignored data files are local verification assets, not bundled demo data.
+Open `http://127.0.0.1:8501`. Choose **Dataset replay**, then campaign and host. For **Upload capture**, select a CSV/PCAP/PCAPNG file using the same app. Maximum 2 GB. The public verification capture is `data/demo_verification/http.pcap`; its PCAPNG representation is `http.pcapng`. A full real upload example already on this machine is `data/live/server_attack.csv`. These ignored data files are local verification assets, not bundled demo data.
 
 Optional standalone offline conversion, including the compatibility reader when required:
 

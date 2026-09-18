@@ -1,151 +1,79 @@
 <!DOCTYPE html>
-
 <html lang="en"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>Network Attack Forecasting · Model Architecture</title>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <style>
-    @layer base {
-      html, body { margin: 0; padding: 0; }
-      body { overscroll-behavior: none; }
-    }
-    ::-webkit-scrollbar { display: none; }
+    @layer base { html, body { margin: 0; padding: 0; } body { overscroll-behavior: none; } }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
   </style>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <script id="tailwind-config">
     tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "surface-dim": "#d2d9f4",
-            "surface-container-low": "#f2f3ff",
-            "on-surface-variant": "#475569",
-            "surface-container": "#eaedff",
-            "surface-bright": "#faf8ff",
-            "outline": "#64748b",
-            "outline-variant": "#e2e8f0",
-            "surface-container-lowest": "#ffffff",
-            "on-primary": "#ffffff",
-            "on-surface": "#0f172a",
-            "surface-container-highest": "#dae2fd",
-            "secondary": "#0284c7",
-            "primary": "#006194",
-            "primary-container": "#0369a1",
-            "surface": "#faf8ff",
-            "background": "#faf8ff"
-          },
-          fontFamily: {
-            "body": ["IBM Plex Sans", "sans-serif"],
-            "mono": ["JetBrains Mono", "monospace"]
-          }
-        }
-      }
+      theme: { extend: {
+        colors: { "primary": "#0284c7", "background": "#f8fafc", "on-surface": "#0f172a", "on-surface-variant": "#475569" },
+        fontFamily: { "sans": ["IBM Plex Sans", "sans-serif"], "mono": ["IBM Plex Mono", "JetBrains Mono", "monospace"] }
+      } }
     }
   </script>
 </head>
-<body class="bg-background font-body text-on-surface antialiased selection:bg-primary/10">
-<!-- GLOBAL PERSISTENT SIDEBAR -->
-<aside class="fixed left-0 top-0 h-screen w-60 bg-surface-container-lowest border-r border-outline-variant z-50 flex flex-col justify-between select-none">
+<body class="bg-[#f8fafc] font-sans text-slate-900 antialiased min-h-screen flex">
+<!-- PERSISTENT LEFT SIDEBAR -->
+<aside class="fixed left-0 top-0 h-screen w-[236px] bg-white border-r border-slate-200 z-50 flex flex-col justify-between select-none">
 <div class="flex flex-col">
-<!-- Sidebar Brand Header -->
-<div class="h-14 px-4 flex flex-col justify-center border-b border-outline-variant">
-<div class="flex items-center gap-1.5">
-<span class="w-2 h-2 bg-primary"></span>
-<span class="text-xs uppercase tracking-wider text-on-surface font-semibold">Network Attack</span>
+<!-- Brand -->
+<div class="h-14 px-4 flex flex-col justify-center border-b border-slate-200">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 bg-[#0284c7]"></span>
+<span class="font-mono text-[11px] font-semibold tracking-wider text-slate-900 uppercase">Network Attack</span>
 </div>
-<div class="flex items-center justify-between mt-0.5">
-<span class="text-xs uppercase tracking-wider text-primary font-semibold">Forecasting</span>
-<span class="font-mono text-[10px] text-outline px-1 bg-surface-container-low border border-outline-variant">SIH26153 / NTRO</span>
+<span class="font-mono text-[11px] font-semibold tracking-wider text-[#0284c7] uppercase mt-0.5">Forecasting</span>
 </div>
-</div>
-<!-- Navigation Section -->
-<div class="px-4 py-2">
-<div class="text-outline text-[11px] uppercase tracking-wider font-semibold">Navigation</div>
-</div>
-<nav class="flex flex-col space-y-0.5 px-2">
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="home" href="#">
-<span class="font-mono text-[11px] text-outline">01</span><span>Home</span>
-</a>
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="simulate" href="#">
-<span class="font-mono text-[11px] text-outline">02</span><span>Simulate</span>
-</a>
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="forecast" href="#">
-<span class="font-mono text-[11px] text-outline">03</span><span>Forecast</span>
-</a>
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="att-ck" href="#">
-<span class="font-mono text-[11px] text-outline">04</span><span>ATT&amp;CK</span>
-</a>
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="investigate" href="#">
-<span class="font-mono text-[11px] text-outline">05</span><span>Investigate</span>
-</a>
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="network" href="#">
-<span class="font-mono text-[11px] text-outline">06</span><span>Network</span>
-</a>
-<a class="flex items-center gap-2.5 px-3 py-1.5 text-xs text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors" data-path="validate" href="#">
-<span class="font-mono text-[11px] text-outline">07</span><span>Validate</span>
-</a>
-<!-- ACTIVE SCREEN: 08 Model -->
-<a aria-current="page" class="flex items-center gap-2.5 px-3 py-1.5 text-xs bg-surface-container text-primary font-semibold border-l-2 border-primary transition-colors" data-path="model" href="#">
-<span class="font-mono text-[11px] text-primary">08</span><span>Model</span>
-</a>
+<!-- Navigation -->
+<div class="px-4 pt-3 pb-1"><span class="text-[10px] font-mono tracking-widest text-slate-400 uppercase">Navigation</span></div>
+<nav class="flex flex-col space-y-0.5 px-2 font-mono text-[12px]">
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/home"><span class="text-slate-400">01</span><span>Home</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/simulate"><span class="text-slate-400">02</span><span>Simulate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/forecast"><span class="text-slate-400">03</span><span>Forecast</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/attack"><span class="text-slate-400">04</span><span>ATT&amp;CK</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/investigate"><span class="text-slate-400">05</span><span>Investigate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/network"><span class="text-slate-400">06</span><span>Network</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/validate"><span class="text-slate-400">07</span><span>Validate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/model"><span class="text-slate-400">08</span><span>Model</span></a>
 </nav>
 </div>
-<!-- Sidebar Status Footer -->
-<div class="p-3.5 border-t border-outline-variant bg-surface-container-low/40">
-<div class="flex flex-col gap-1 font-mono text-[11px] text-on-surface-variant">
-<div class="flex items-center justify-between"><span class="text-outline uppercase">Mode:</span><span class="text-on-surface font-medium">Offline Replay</span></div>
-<div class="flex items-center justify-between"><span class="text-outline uppercase">Data:</span><span class="text-on-surface font-medium truncate max-w-[120px]">Network Telemetry</span></div>
-<div class="flex items-center gap-1.5 mt-1 text-emerald-600">
-<span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-<span class="text-[10px] font-semibold tracking-wide uppercase">Telemetry Active</span>
-</div>
-</div>
+<!-- Pinned bottom -->
+<div class="p-4 border-t border-slate-200 bg-slate-50/60 font-mono text-[11px] text-slate-600 space-y-1.5">
+<div class="flex items-center justify-between"><span class="text-slate-400 uppercase tracking-wider text-[10px]">Mode</span><span class="text-slate-800 font-medium">Offline Replay</span></div>
+<div class="flex items-center justify-between"><span class="text-slate-400 uppercase tracking-wider text-[10px]">Data</span><span id="nv-side-data" class="text-slate-800 font-medium truncate max-w-[120px]">World Model</span></div>
+<div id="nv-side-status" class="flex items-center gap-1.5 pt-1 text-slate-500"><span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span><span class="font-mono text-[10px] uppercase tracking-wider font-semibold">Connecting…</span></div>
 </div>
 </aside>
-<!-- MAIN WRAPPER -->
-<div class="pl-60 min-h-screen flex flex-col">
-<!-- PERSISTENT TOP BAR -->
-<header class="fixed top-0 left-60 right-0 h-14 bg-surface-container-lowest border-b border-outline-variant z-40 px-6 flex items-center justify-between">
-<div class="flex items-center gap-5">
-<div class="flex items-center gap-2 border-r border-outline-variant pr-5">
-<span class="text-sm font-semibold text-on-surface tracking-tight uppercase">Network Attack Forecasting</span>
+<!-- MAIN CONTAINER -->
+<div class="pl-[236px] min-h-screen flex-1 flex flex-col">
+<!-- HEADER -->
+<header class="fixed top-0 left-[236px] right-0 h-14 bg-white border-b border-slate-200 z-40 flex items-center justify-between gap-4">
+<div class="flex items-center gap-3 shrink-0">
+<span class="font-mono text-[13px] font-semibold text-slate-900 tracking-tight uppercase">Network Attack Forecasting</span>
 </div>
-<div class="hidden xl:flex items-center gap-4 font-mono text-xs">
-<div class="flex items-center gap-1.5">
-<span class="text-outline">SCENARIO:</span>
-<span class="text-on-surface font-medium px-1.5 py-0.5 bg-surface-container border border-outline-variant">CSE-CIC-IDS2018 · Port Scan</span>
-</div>
-<div class="flex items-center gap-1.5">
-<span class="text-outline">HOST:</span>
-<span class="text-on-surface font-medium px-1.5 py-0.5 bg-surface-container border border-outline-variant">192.168.10.14</span>
-</div>
-<div class="flex items-center gap-1.5">
-<span class="text-outline">HORIZON:</span>
-<span class="text-primary font-semibold px-1.5 py-0.5 bg-surface-container border border-outline-variant">+120s</span>
-</div>
-<div class="flex items-center gap-1.5">
-<span class="text-outline">MODE:</span>
-<span class="text-sky-700 font-medium px-1.5 py-0.5 bg-sky-50 border border-sky-200">Offline Replay</span>
-</div>
-</div>
-</div>
-<div class="flex items-center gap-3">
-<div class="flex items-center border border-outline-variant divide-x divide-outline-variant text-outline font-mono text-xs bg-surface-container-low">
-<span class="px-2.5 py-1 flex items-center gap-1.5 text-emerald-600"><span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>SYNC</span>
-<span class="px-2.5 py-1 text-on-surface-variant">UTC 14:22:08</span>
-</div>
-<div class="w-7 h-7 rounded-full bg-primary flex items-center justify-center">
-<span class="material-symbols-outlined text-on-primary text-[16px]">person</span>
-</div>
+<div id="nv-ctx">
+<span class="kv"><span class="k">Scenario</span><span class="v" id="nv-ctx-scenario">—</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Host</span><span class="v" id="nv-ctx-host">—</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Horizon</span><span class="v accent" id="nv-ctx-horizon">+120s</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Mode</span><span class="v teal" id="nv-ctx-mode">Offline Replay</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="v" id="nv-ctx-clock">00:00:00 UTC</span></span>
 </div>
 </header>
-<!-- CONTENT BODY -->
-<main class="flex-1 pt-14 w-full bg-background">
+<!-- CONTENT -->
+<main class="flex-1 bg-[#f8fafc]">
   <div id="nv-root"></div>
 </main>
 </div>

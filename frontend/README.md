@@ -16,9 +16,11 @@ served by Vite, connected live to the world-model backend in `../sih26153-world-
    npm run dev        # http://localhost:5173
    ```
 
-Open `http://localhost:5173/forecast`. Each page loads `/api.js`, which fetches the backend
-(`http://localhost:8000`, override with `window.NV_API_BASE`) and renders a live "world model"
-panel using real model output, with the Stitch design preserved below.
+Open `http://localhost:5173/forecast`. Every page is a shared shell (sidebar, header, live
+context bar) with a single `#nv-root` mount. `/navigation.js` wires the shell and `/app-shell.css`
+is the shared design system; `/api.js` fetches the backend (`http://localhost:8000`, override with
+`window.NV_API_BASE`) and renders each page's content from real model output using that design
+system. When the backend is unreachable, pages show an honest "backend offline" state.
 
 ## What is live (real model, not fixtures)
 - **Simulate / Home** - upload a CICFlowMeter CSV or PCAP/PCAPNG; the file is cleaned and windowed
