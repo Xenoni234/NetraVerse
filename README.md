@@ -71,9 +71,16 @@ parquet files, and live predictions are intentionally excluded from Git. They
 are large or environment-specific and are regenerated locally. See
 `.gitignore` and [docs/setup.md](docs/setup.md) for the data layout.
 
-If local SIH weights exist at `models/wm_sih_demo/best.ckpt`, the API uses them.
-Otherwise it falls back to the tracked reference checkpoint at
-`models/wm_final/best.ckpt`. To select a checkpoint explicitly:
+The public showcase checkpoint is `models/wm_sih_demo/best.ckpt`. It is kept
+separate from the reference checkpoint and is intended for the SIH demo workflow.
+Its actual benchmark is documented in
+[docs/benchmarks/sih_demo_benchmark.md](docs/benchmarks/sih_demo_benchmark.md);
+the results combine labelled CIC-derived demo suites with controlled synthetic
+episodes and must not be presented as production validation.
+
+If the SIH checkpoint is absent locally, the API falls back to the tracked
+reference checkpoint at `models/wm_final/best.ckpt`. To select a checkpoint
+explicitly:
 
 ```powershell
 $env:NETRAVERSE_CHECKPOINT = "$PWD\models\wm_sih_demo\best.ckpt"

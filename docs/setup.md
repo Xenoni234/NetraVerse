@@ -111,8 +111,9 @@ Linux/macOS:
 export NETRAVERSE_CHECKPOINT="$PWD/models/wm_sih_demo/best.ckpt"
 ```
 
-Set the variable before starting Uvicorn. Do not commit private or experimental
-checkpoints; the SIH and generated model directories are ignored.
+Set the variable before starting Uvicorn. The SIH showcase checkpoint and its
+report are public release artifacts; private or experimental checkpoints remain
+ignored.
 
 ## 6. Local demo datasets
 
@@ -141,7 +142,9 @@ then run:
 python scripts/train_sih_demo.py
 ```
 
-Training writes to `models/wm_sih_demo/`, which is intentionally ignored.
+Training writes to `models/wm_sih_demo/`. The showcase `best.ckpt` and
+`finetune_report.json` are tracked; retraining logs and other generated files in
+that directory remain ignored.
 
 ## 7. Live server monitoring
 

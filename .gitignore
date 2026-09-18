@@ -112,3 +112,10 @@ Thumbs.db
 !/reports/world_model_improvement.md
 /results/*
 !/results/lr_baseline.json
+
+# Public SIH showcase release: the small checkpoint and its report are tracked.
+# Training logs, optimizer state and generated side files remain ignored.
+!/models/wm_sih_demo/
+/models/wm_sih_demo/*
+!/models/wm_sih_demo/best.ckpt
+!/models/wm_sih_demo/finetune_report.json

@@ -1,0 +1,58 @@
+{
+  "name": "SIH Demo Showcase",
+  "status": "demo_showcase_not_production_validated",
+  "checkpoint": "models/wm_sih_demo/best.ckpt",
+  "source_report": "models/wm_sih_demo/finetune_report.json",
+  "horizons": ["+60s", "+90s", "+120s"],
+  "validation": {
+    "best_mean_validation_pr_auc": 0.15577437599554747
+  },
+  "held_out_metrics": {
+    "+60s": {
+      "precision": 0.06741573033707865,
+      "recall": 1.0,
+      "pr_auc": 0.10775558630850181
+    },
+    "+90s": {
+      "precision": 0.09944751381215469,
+      "recall": 1.0,
+      "pr_auc": 0.17199076693494308
+    },
+    "+120s": {
+      "precision": 0.13186813186813187,
+      "recall": 1.0,
+      "pr_auc": 0.24943901016968922
+    }
+  },
+  "stage_support": {
+    "RECONNAISSANCE": {"samples": 18, "positive_samples": 18},
+    "INITIAL ACCESS": {"samples": 18, "positive_samples": 18},
+    "LATERAL MOVEMENT": {"samples": 18, "positive_samples": 18},
+    "COMMAND AND CONTROL": {"samples": 18, "positive_samples": 18},
+    "EXFILTRATION": {"samples": 18, "positive_samples": 18},
+    "IMPACT": {"samples": 18, "positive_samples": 18}
+  },
+  "attention": {
+    "top3_concentration": 0.3011908531188965,
+    "mean_weights": [
+      0.10071220248937607,
+      0.1003727912902832,
+      0.10010585933923721,
+      0.09992590546607971,
+      0.09981679171323776,
+      0.09976162016391754,
+      0.09974922239780426,
+      0.09977518022060394,
+      0.0998380109667778,
+      0.0999424085021019
+    ],
+    "interpretation": "Diffuse on the reported held-out aggregate; attention is not causal proof."
+  },
+  "unreported_metrics": [
+    "per-stage precision, recall and PR-AUC",
+    "false-positive rate",
+    "minimum and median lead time by horizon",
+    "independent real-world/server validation"
+  ],
+  "data_note": "The run combines mixed labelled CIC-derived demo suites with controlled synthetic six-stage episodes. Synthetic/demo evidence must not be presented as independent operational validation."
+}
