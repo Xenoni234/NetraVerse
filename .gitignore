@@ -70,3 +70,45 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local secrets and application state
+.env
+.env.*
+!.env.example
+.streamlit/
+*.sqlite3
+*.db
+
+# Frontend dependencies and generated bundles
+/frontend/node_modules/
+/frontend/dist/
+
+# Generated SIH demo datasets (regenerate with scripts/)
+/demo/large_labelled/
+/demo/mixed_labelled/
+/demo/samples/*.csv
+!/demo/samples/sample_webattack_192.168.10.8.csv
+
+# Generated checkpoints and experiment artifacts
+/models/wm_sih_demo/
+/models/wm_mixed_demo/
+/models/wm_phase6/
+/models/wm_onset/
+/models/wm_onset_v2/
+/models/wm_onset_v3/
+/models/wm_pair/
+/models/wm_wc/
+/models/wm_server/
+/models/wm_improved/
+/models/wm_ctu13/
+/models/wm_cicids2017/
+/models/wm_cicids2017_full/
+/models/wm_repaired/
+
+# Generated reports and prediction outputs; keep source documentation under docs/
+/reports/*
+!/reports/pipeline_repair_audit.json
+!/reports/pipeline_repair_results.md
+!/reports/world_model_improvement.md
+/results/*
+!/results/lr_baseline.json

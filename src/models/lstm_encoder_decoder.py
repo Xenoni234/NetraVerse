@@ -39,6 +39,8 @@ class WorldModelConfig:
     residual_state: bool = False
     temporal_deltas: bool = False
     cumulative_risk: bool = False
+    near_horizons: tuple[int, ...] = (1, 2, 4, 8)
+    direct_horizons: tuple[int, ...] = (16, 30, 60)
 
     @property
     def n_mask(self) -> int:
@@ -72,6 +74,17 @@ class WorldModel(nn.Module):
         self.state_head = StateHead(config.hidden_size, config.state_size, dropout=config.dropout)
         self.risk_head = RiskHead(config.hidden_size, dropout=config.dropout)
         self.stage_head = StageHead(config.hidden_size, config.n_stages, dropout=config.dropout)
+        self.direct_horizons = tuple(k for k in config.direct_horizons if k in config.horizons)
+        self.near_horizons = tuple(k for k in config.near_horizons if k in config.horizons)
+        if self.direct_horizons:
+            self.direct_query = nn.Embedding(max(self.direct_horizons) + 1, config.hidden_size)
+            self.direct_fuse = nn.Sequential(
+                nn.Linear(config.hidden_size * 3, config.hidden_size), nn.Tanh(),
+                nn.Dropout(config.dropout),
+            )
+            self.direct_state_head = StateHead(config.hidden_size, config.state_size, dropout=config.dropout)
+            self.direct_risk_head = RiskHead(config.hidden_size, dropout=config.dropout)
+            self.direct_stage_head = StageHead(config.hidden_size, config.n_stages, dropout=config.dropout)
         if config.residual_state:
             nn.init.zeros_(self.state_head.mean.weight)
             nn.init.zeros_(self.state_head.mean.bias)
@@ -92,6 +105,17 @@ class WorldModel(nn.Module):
 
     def get_config(self) -> WorldModelConfig:
         return self.config
+
+    def load_pretrained_encoder(self, state_dict: Mapping[str, Tensor], *, strict: bool = True) -> None:
+        """Load encoder-only weights produced by Phase 6 self-supervised pretraining."""
+        current = self.encoder.state_dict()
+        compatible = {k: v for k, v in state_dict.items()
+                      if k in current and tuple(v.shape) == tuple(current[k].shape)}
+        missing = [key for key in current if key not in compatible]
+        unexpected = [key for key in state_dict if key not in current or key not in compatible]
+        if strict and (missing or unexpected):
+            raise RuntimeError(f"encoder checkpoint mismatch: missing={missing}, unexpected={unexpected}")
+        self.encoder.load_state_dict(compatible, strict=False)
 
     # -- forward ------------------------------------------------------------- #
 
@@ -120,7 +144,7 @@ class WorldModel(nn.Module):
             (Sliced to the LOCKED horizons ``K``.)
         """
         cfg = self.config
-        steps = n_steps or cfg.rollout_steps
+        steps = n_steps or max(cfg.rollout_steps, max(cfg.near_horizons, default=0))
         enc_input = x
         if cfg.temporal_deltas:
             delta = torch.cat([torch.zeros_like(x[:, :1]), x[:, 1:] - x[:, :-1]], dim=1)
@@ -167,15 +191,60 @@ class WorldModel(nn.Module):
                 use_own = (torch.rand(x.size(0), 1, device=x.device) < sampling_prob).float()
                 prev = use_own * pred_frame + (1.0 - use_own) * gt_frame
 
-        out = {
+        near = {
             "state_mean": torch.stack(means, dim=1),
             "state_logvar": torch.stack(logvars, dim=1),
             "risk_logits": torch.stack(risks, dim=1),
             "stage_logits": torch.stack(stages, dim=1),
         }
+        if self.direct_horizons:
+            # Direct heads use the complete encoder context and a horizon query.
+            # They avoid accumulating 60 autoregressive state errors while still
+            # sharing the temporal representation learned by the near-term path.
+            context = torch.cat([h[-1], enc_out.mean(dim=1)], dim=-1)
+            d_states, d_logvars, d_risks, d_stages = [], [], [], []
+            for horizon in self.direct_horizons:
+                q = self.direct_query.weight[horizon].unsqueeze(0).expand(x.size(0), -1)
+                hidden = self.direct_fuse(torch.cat([context, q], dim=-1))
+                mean, logvar = self.direct_state_head(hidden)
+                d_states.append(mean); d_logvars.append(logvar)
+                d_risks.append(self.direct_risk_head(hidden))
+                d_stages.append(self.direct_stage_head(hidden))
+            direct = {
+                "state_mean": torch.stack(d_states, dim=1),
+                "state_logvar": torch.stack(d_logvars, dim=1),
+                "risk_logits": torch.stack(d_risks, dim=1),
+                "stage_logits": torch.stack(d_stages, dim=1),
+            }
+        else:
+            direct = {}
+        # Reassemble outputs in the configured public horizon order.
+        result = {}
+        near_index = {k: i for i, k in enumerate(range(1, near["risk_logits"].shape[1] + 1))}
+        direct_index = {k: i for i, k in enumerate(self.direct_horizons)}
+        for name in ("state_mean", "state_logvar", "risk_logits", "stage_logits"):
+            chunks = []
+            for k in cfg.horizons:
+                if k in direct_index:
+                    chunks.append(direct[name][:, direct_index[k]:direct_index[k] + 1])
+                elif k in near_index:
+                    chunks.append(near[name][:, near_index[k]:near_index[k] + 1])
+                else:
+                    raise ValueError(f"horizon {k} is neither near nor direct")
+            result[name] = torch.cat(chunks, dim=1)
+        out = result
         if self.use_attention:
             out["attn_weights"] = torch.stack(attns, dim=1)   # (B, steps, L)
-        return self.select_horizons(out)
+        if self.use_attention:
+            # Attention is only defined for decoder-produced near horizons. Keep
+            # the nearest available attention map for direct long horizons so
+            # existing explanation consumers retain a stable tensor shape.
+            attn_by_step = {k: attns[k - 1] for k in range(1, len(attns) + 1)}
+            fallback = attns[-1]
+            out["attn_weights"] = torch.stack(
+                [attn_by_step.get(k, fallback) for k in cfg.horizons], dim=1
+            )
+        return out
 
     def select_horizons(
         self, outputs: Mapping[str, Tensor], horizons: Sequence[int] | None = None

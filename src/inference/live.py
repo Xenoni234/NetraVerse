@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from src.data import windowing as W
+from src.data import labeller as _lab
 from src.data.loaders import _parse_timestamps  # reuse the tz-aware parser
 from src.data.unified_schema import (
     CICIDS2017_COLUMN_MAP,
@@ -72,9 +73,10 @@ def _detect_map(columns: list[str]) -> tuple[str, dict]:
 
 
 def load_live_flows(
-    path: Path | str, *, campaign_id: str = "live", return_report: bool = False
+    path: Path | str, *, campaign_id: str = "live", return_report: bool = False,
+    preserve_labels: bool = False,
 ):
-    """Read CICFlowMeter CSV(s) into a unified, unlabelled flow frame.
+    """Read CICFlowMeter CSV(s) into a unified flow frame.
 
     Cleans the uploaded/live capture before it reaches the model: drops fully-empty
     rows and exact-duplicate flows, coerces features to numeric, imputes non-finite
@@ -105,6 +107,8 @@ def load_live_flows(
         frames.append(df)
     raw = pd.concat(frames, ignore_index=True)
     report = {"rows_read": int(len(raw))}
+    label_source = next((c for c in raw.columns if str(c).strip().lower() in
+                         {"label", "attack_cat", "attack_category"}), None)
 
     # drop fully-empty rows (all cells NaN) - a common trailing-record artefact
     empty_mask = raw.isna().all(axis=1)
@@ -158,9 +162,21 @@ def load_live_flows(
 
     work["campaign_id"] = campaign_id
     work["dataset"] = name
-    # placeholders so build_windows runs on unlabelled live data
-    work["binary_label"] = np.int8(0)
-    work["attt_stage"] = np.int64(0)
+    if preserve_labels and label_source is not None:
+        # Labelled CIC-IDS2017 uploads use the project's canonical vocabulary.
+        # Keep raw labels for auditability, then derive binary/stage labels using
+        # the same path used by the training datasets.
+        work["label_raw"] = raw.loc[work.index, label_source].astype("string").str.strip().to_numpy()
+        work = _lab.label_frame(work, dataset="cicids2017", campaign_col="campaign_id",
+                                 add_distance=True, strict=True, verbose=False)
+        report["ground_truth"] = True
+        report["label_column"] = label_source
+        report["label_families"] = sorted(work["attack_family"].dropna().unique().tolist())
+    else:
+        # placeholders so build_windows runs on unlabelled live data
+        work["binary_label"] = np.int8(0)
+        work["attt_stage"] = np.int64(0)
+        report["ground_truth"] = False
     out = work.sort_values("timestamp", kind="mergesort").reset_index(drop=True)
     report["flows_kept"] = int(len(out))
     report["column_map"] = name

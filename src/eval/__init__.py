@@ -19,4 +19,17 @@ Rules of engagement
 
 from __future__ import annotations
 
-__all__ = ["harness", "metrics", "splits", "ablations"]
+from .baselines import (
+    logistic_probabilities,
+    persistence_probabilities,
+    prior_probabilities,
+    random_forest_probabilities,
+)
+
+__all__ = [
+    "harness", "metrics", "splits", "ablations",
+    "logistic_probabilities",
+    "persistence_probabilities",
+    "prior_probabilities",
+    "random_forest_probabilities",
+]

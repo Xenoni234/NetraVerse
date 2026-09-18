@@ -43,14 +43,25 @@ def forecast_once(fc, flows_path: str, horizon: int, sustain: int) -> pd.DataFra
             continue
         last = tl.iloc[-1]
         rk = tl[f"risk_k{horizon}"].to_numpy()
-        alerting = len(rk) >= sustain and (rk[-sustain:] >= fc.threshold).all()
+        selected_threshold = fc.threshold_for_horizon(horizon)
+        levels = {
+            "urgent": [k for k in fc.horizons if k <= 2],
+            "warning": [k for k in fc.horizons if 2 < k <= 8],
+            "advisory": [k for k in fc.horizons if k > 8],
+        }
+        crossed = {level: [k for k in ks if float(last[f"risk_k{k}"]) >= fc.threshold_for_horizon(k)]
+                   for level, ks in levels.items()}
+        alert_level = next((level for level in ("urgent", "warning", "advisory") if crossed[level]), "none")
+        crossed_horizons = [k for ks in crossed.values() for k in ks]
         rows.append({
             "issued_at": now,
             "host": ent,
             "last_window": last["window_start"],
             **{f"risk_k{k}": float(last[f"risk_k{k}"]) for k in fc.horizons},
             "stage": int(last[f"stage_k{horizon}"]),
-            "alerting": bool(alerting),
+            "alerting": bool(len(rk) >= sustain and (rk[-sustain:] >= selected_threshold).all()),
+            "alert_level": alert_level,
+            "earliest_warning_horizon": max(crossed_horizons) if crossed_horizons else None,
         })
     return pd.DataFrame(rows)
 
@@ -61,7 +72,8 @@ def main(argv=None) -> int:
     ap.add_argument("--checkpoint", default=str(REPO_ROOT / "models" / "wm_server" / "best.ckpt"))
     ap.add_argument("--predictions", default=str(REPO_ROOT / "reports" / "live" / "predictions.parquet"))
     ap.add_argument("--interval", type=int, default=30, help="seconds between forecasts")
-    ap.add_argument("--horizon", type=int, default=4)
+    ap.add_argument("--horizon", type=int, default=4,
+                    help="primary horizon in 30-second windows; 4 means +120 seconds")
     ap.add_argument("--sustain", type=int, default=2)
     ap.add_argument("--once", action="store_true", help="run a single pass and exit")
     args = ap.parse_args(argv)
@@ -69,6 +81,10 @@ def main(argv=None) -> int:
     ckpt = args.checkpoint if Path(args.checkpoint).exists() else str(
         REPO_ROOT / "models" / "wm_final" / "best.ckpt")
     fc = load_forecaster(ckpt, device="cpu")
+    if args.horizon not in fc.horizons:
+        requested = args.horizon
+        args.horizon = max(fc.horizons)
+        print(f"[live] requested +{requested * 30}s is unavailable in checkpoint; using +{args.horizon * 30}s")
     print(f"[live] checkpoint={ckpt} | threshold={fc.threshold:.4f} | horizon=+{args.horizon*30}s")
     print(f"[live] watching {args.flows} every {args.interval}s (Ctrl-C to stop)")
 

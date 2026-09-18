@@ -411,13 +411,113 @@ def load_dataset(
     if dataset == "cicids2018":
         days = list(campaigns) if campaigns else list(CICIDS2018_DAYS)
         return load_cicids2018_days(days, max_rows_per_day=max_rows)
+    if dataset == "unsw_nb15":
+        return load_unsw_nb15(max_rows=max_rows)
     raise NotImplementedError(f"Loader for {dataset!r} not implemented yet")
 
 
 
 def load_unsw_nb15(path: Path | None = None, *, max_rows: int | None = None) -> pd.DataFrame:
-    """Load UNSW-NB15, attaching names from ``NUSW-NB15_features.csv``."""
-    raise NotImplementedError("TODO: read the feature-name file, then the 4 headerless CSVs")
+    """Load the raw, timestamped UNSW-NB15 flow files.
+
+    The four raw files are headerless. The archive's feature dictionary is
+    named ``NUSW-NB15_features.csv``. The summarized train/test files are not
+    used because they omit the timestamps and endpoint identities needed for
+    temporal forecasting.
+    """
+    from src.data.paths import raw_dataset_dir
+
+    root = Path(path) if path is not None else raw_dataset_dir("unsw_nb15")
+    if root.is_file():
+        root = root.parent
+    files = sorted(root.rglob("UNSW-NB15_[1-4].csv"))
+    if not files:
+        raise FileNotFoundError(f"No raw UNSW-NB15_1..4.csv files found under {root}")
+    feature_files = sorted(root.rglob("*features*.csv"))
+    if not feature_files:
+        raise FileNotFoundError(f"UNSW-NB15 feature dictionary not found under {root}")
+    feature_table = pd.read_csv(feature_files[0], encoding="latin1")
+    if "Name" not in feature_table.columns:
+        raise ValueError(f"Expected a Name column in {feature_files[0].name}")
+    names = [str(v).strip().replace("ct_src_ ltm", "ct_src_ltm")
+             for v in feature_table["Name"].tolist()]
+    if len(names) != 49:
+        raise ValueError(f"Expected 49 UNSW-NB15 feature names, found {len(names)}")
+
+    def numeric(frame: pd.DataFrame, name: str) -> pd.Series:
+        return pd.to_numeric(frame.get(name, 0), errors="coerce").fillna(0.0)
+
+    frames: list[pd.DataFrame] = []
+    remaining = max_rows
+    for file_path in files:
+        kwargs: dict = {"header": None, "names": names, "encoding": "latin1",
+                        "na_values": ["-", ""]}
+        if remaining is not None:
+            kwargs["nrows"] = remaining
+        raw = pd.read_csv(file_path, **kwargs)
+        if raw.empty:
+            continue
+        dur_s = numeric(raw, "dur").clip(lower=0)
+        fwd_pkts = numeric(raw, "Spkts").clip(lower=0)
+        bwd_pkts = numeric(raw, "Dpkts").clip(lower=0)
+        fwd_bytes = numeric(raw, "sbytes").clip(lower=0)
+        bwd_bytes = numeric(raw, "dbytes").clip(lower=0)
+        total_pkts = (fwd_pkts + bwd_pkts).replace(0, np.nan)
+        dur_nonzero = dur_s.replace(0, np.nan)
+        out = pd.DataFrame(index=raw.index)
+        out["timestamp"] = pd.to_datetime(numeric(raw, "Stime"), unit="s", utc=True, errors="coerce")
+        out["src_ip"] = raw.get("srcip", "").astype("string")
+        out["dst_ip"] = raw.get("dstip", "").astype("string")
+        out["src_port"] = numeric(raw, "sport")
+        out["dst_port"] = numeric(raw, "dsport")
+        out["protocol"] = raw.get("proto", "").astype("string")
+        out["flow_duration"] = dur_s * _US_PER_S
+        out["packets_per_second"] = ((fwd_pkts + bwd_pkts) / dur_nonzero).fillna(0)
+        out["bytes_per_second"] = ((fwd_bytes + bwd_bytes) / dur_nonzero).fillna(0)
+        out["fwd_bwd_ratio"] = (fwd_pkts / bwd_pkts.replace(0, np.nan)).fillna(0)
+        out["fwd_packets"] = fwd_pkts
+        out["bwd_packets"] = bwd_pkts
+        out["fwd_bytes"] = fwd_bytes
+        out["bwd_bytes"] = bwd_bytes
+        out["iat_mean"] = (((numeric(raw, "Sintpkt") * fwd_pkts) +
+                             (numeric(raw, "Dintpkt") * bwd_pkts)) / total_pkts).fillna(0) * 1000.0
+        out["iat_std"] = 0.0
+        out["iat_max"] = 0.0
+        for flag in ("syn_count", "ack_count", "fin_count", "psh_count", "urg_count"):
+            out[flag] = 0.0
+        out["rst_count"] = raw.get("state", "").astype("string").str.contains(
+            "RST", case=False, na=False).astype("float32")
+        out["pkt_len_mean"] = ((fwd_pkts * numeric(raw, "smeansz") +
+                                 bwd_pkts * numeric(raw, "dmeansz")) / total_pkts).fillna(0)
+        out["pkt_len_std"] = 0.0
+        out["fwd_pkt_len_mean"] = numeric(raw, "smeansz")
+        out["bwd_pkt_len_mean"] = numeric(raw, "dmeansz")
+        out["pkt_len_var"] = 0.0
+        out["fwd_iat_mean"] = numeric(raw, "Sintpkt") * 1000.0
+        out["bwd_iat_mean"] = numeric(raw, "Dintpkt") * 1000.0
+        out["init_win_fwd"] = numeric(raw, "swin")
+        out["init_win_bwd"] = numeric(raw, "dwin")
+        out["active_mean"] = 0.0
+        out["idle_mean"] = 0.0
+        out["label_raw"] = raw.get("attack_cat", "Normal").astype("string").fillna("Normal")
+        out["dataset"] = "unsw_nb15"
+        out["campaign_id"] = "unsw_nb15"
+        frames.append(out)
+        if remaining is not None:
+            remaining -= len(out)
+            if remaining <= 0:
+                break
+    if not frames:
+        raise ValueError(f"UNSW-NB15 files under {root} produced no rows")
+    result = pd.concat(frames, ignore_index=True)
+    result = result[result["timestamp"].notna()].copy()
+    result = result.sort_values(["campaign_id", "timestamp"], kind="mergesort").reset_index(drop=True)
+    if max_rows is not None:
+        result = result.iloc[:max_rows].copy()
+    print(f"  [loader] unsw_nb15: {len(result):,} rows | "
+          f"{result['timestamp'].min()} -> {result['timestamp'].max()} | "
+          f"attack rate {(result['label_raw'] != 'Normal').mean():.1%}")
+    return result
 
 
 #: Columns the FULL CTU-13 binetflow carries and that we need (Argus/binetflow).

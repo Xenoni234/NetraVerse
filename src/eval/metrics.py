@@ -208,6 +208,102 @@ def format_operating_points(results: Mapping[str, object]) -> str:
     return "\n".join(lines)
 
 
+def brier_score(y_true: np.ndarray | Sequence[int], y_prob: np.ndarray | Sequence[float]) -> float:
+    """Mean squared probability error; lower is better."""
+    y = np.asarray(y_true, dtype="float64").ravel()
+    p = np.asarray(y_prob, dtype="float64").ravel()
+    if len(y) != len(p):
+        raise ValueError("y_true and y_prob must have equal length")
+    return float(np.mean((p - y) ** 2)) if len(y) else float("nan")
+
+
+def expected_calibration_error(
+    y_true: np.ndarray | Sequence[int], y_prob: np.ndarray | Sequence[float], *, bins: int = 10
+) -> float:
+    """Equal-width expected calibration error, reported as a probability gap."""
+    y = np.asarray(y_true, dtype="float64").ravel()
+    p = np.clip(np.asarray(y_prob, dtype="float64").ravel(), 0.0, 1.0)
+    if len(y) != len(p) or bins < 1:
+        raise ValueError("invalid calibration inputs")
+    if not len(y):
+        return float("nan")
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    bucket = np.minimum(np.digitize(p, edges[1:-1], right=False), bins - 1)
+    return float(sum(
+        (mask.mean()) * abs(y[mask].mean() - p[mask].mean())
+        for i in range(bins) if (mask := bucket == i).any()
+    ))
+
+
+def bootstrap_pr_auc(
+    y_true: np.ndarray | Sequence[int], y_prob: np.ndarray | Sequence[float], *,
+    n_resamples: int = 2000, seed: int = 1337, confidence: float = 0.95,
+) -> dict[str, float | int]:
+    """Bootstrap PR-AUC confidence interval, preserving paired labels/scores."""
+    from sklearn.metrics import average_precision_score
+
+    y = np.asarray(y_true).astype(int).ravel()
+    p = np.asarray(y_prob, dtype="float64").ravel()
+    if len(y) != len(p):
+        raise ValueError("y_true and y_prob must have equal length")
+    rng = np.random.default_rng(seed)
+    values: list[float] = []
+    for _ in range(n_resamples):
+        idx = rng.integers(0, len(y), len(y))
+        if y[idx].min() == y[idx].max():
+            continue
+        values.append(float(average_precision_score(y[idx], p[idx])))
+    if not values:
+        return {"estimate": float("nan"), "lower": float("nan"), "upper": float("nan"), "n_valid": 0}
+    alpha = (1.0 - confidence) / 2.0
+    return {"estimate": float(average_precision_score(y, p)),
+            "lower": float(np.quantile(values, alpha)),
+            "upper": float(np.quantile(values, 1.0 - alpha)),
+            "n_valid": len(values)}
+
+
+def false_alerts_per_hour(
+    meta: "pd.DataFrame", y_true: np.ndarray | Sequence[int], y_prob: np.ndarray | Sequence[float],
+    *, threshold: float = 0.5, time_col: str = "window_start", campaign_col: str = "campaign_id",
+) -> float:
+    """False-positive alert rows per observed campaign-hour.
+
+    This is deliberately a rate over observed timeline exposure, not over flow
+    count. It is an operational measure and should be reported beside FPR.
+    """
+    import pandas as pd
+    y = np.asarray(y_true).astype(int).ravel()
+    p = np.asarray(y_prob, dtype="float64").ravel()
+    if len(meta) != len(y) or len(y) != len(p):
+        raise ValueError("meta, y_true and y_prob must have equal length")
+    false_alerts = int(((p >= threshold) & (y == 0)).sum())
+    times = pd.to_datetime(meta[time_col], utc=True)
+    exposure_seconds = 0.0
+    groups = meta[campaign_col] if campaign_col in meta else pd.Series("all", index=meta.index)
+    for _, idx in groups.groupby(groups, sort=False).groups.items():
+        t = times.loc[idx]
+        if len(t) > 1:
+            exposure_seconds += float((t.max() - t.min()).total_seconds() + 30.0)
+        elif len(t) == 1:
+            exposure_seconds += 30.0
+    return float(false_alerts / (exposure_seconds / 3600.0)) if exposure_seconds else float("nan")
+
+
+def per_campaign_metrics(
+    meta: "pd.DataFrame", y_true: np.ndarray, y_prob: np.ndarray, *, threshold: float = 0.5,
+    campaign_col: str = "campaign_id",
+) -> dict[str, dict[str, object]]:
+    """Compute the standard metric bundle separately for every campaign."""
+    output: dict[str, dict[str, object]] = {}
+    for campaign, idx in meta.groupby(campaign_col, sort=True).groups.items():
+        indices = np.asarray(list(idx), dtype=int)
+        output[str(campaign)] = compute_all_metrics(
+            y_true[indices], (y_prob[indices] >= threshold).astype(int), y_prob[indices],
+            threshold=threshold,
+        )
+    return output
+
+
 def lead_time_distribution(*args: object, **kwargs: object) -> None:
     """Warning lead time per campaign — the project's headline metric.
 
@@ -228,5 +324,10 @@ __all__ = [
     "select_threshold",
     "format_metrics_table",
     "format_operating_points",
+    "brier_score",
+    "expected_calibration_error",
+    "bootstrap_pr_auc",
+    "false_alerts_per_hour",
+    "per_campaign_metrics",
     "lead_time_distribution",
 ]

@@ -20,6 +20,7 @@ def test_exact_rollout_and_onset():
     np.testing.assert_array_equal(b.future[0, :, 0], [10,11,12,13])
     np.testing.assert_array_equal(b.y_state[0, :, 0], [10,11,13])
     np.testing.assert_array_equal(b.y_risk[0], [0,0,1])
+    assert b.meta.iloc[0].next_attack_distance == 3
 
 
 def test_gap_is_not_a_thirty_second_transition():

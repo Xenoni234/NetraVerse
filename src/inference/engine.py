@@ -37,6 +37,7 @@ class Forecaster:
     thresholds: list[float] | None = None
     sequence_policy: str = "strict_30s"
     min_observed_history: int = 3
+    calibrator: object | None = None
 
     def threshold_for_horizon(self, horizon: int) -> float:
         """Use the validation-selected cutoff for this forecast horizon."""
@@ -57,6 +58,8 @@ class Forecaster:
         self.model.eval()
         out = self.model.rollout(xt)
         risk = torch.sigmoid(out["risk_logits"]).cpu().numpy()
+        if self.calibrator is not None:
+            risk = self.calibrator.transform(risk)
         stage = out["stage_logits"].argmax(-1).cpu().numpy()
 
         result = {"risk": risk, "stage": stage}
@@ -166,6 +169,9 @@ def load_forecaster(ckpt_path: Path | str, *, device: str = "auto") -> Forecaste
         thresholds=payload.get("thresholds"),
         sequence_policy=payload.get('sequence_policy','strict_30s'),
         min_observed_history=int(payload.get('min_observed_history',3)),
+        calibrator=(__import__('src.eval.calibration', fromlist=['HorizonCalibrator'])
+                    .HorizonCalibrator.from_dict(payload['calibrator'])
+                    if payload.get('calibrator') else None),
     )
 
 

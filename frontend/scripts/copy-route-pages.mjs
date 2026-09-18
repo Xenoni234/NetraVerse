@@ -9,7 +9,8 @@ const pages = {
   investigate: "Investigate",
   network: "Network",
   validate: "Validate",
-  model: "Model"
+  model: "Model",
+  live: "Live"
 };
 
 await Promise.all(Object.entries(pages).map(async ([route, source]) => {

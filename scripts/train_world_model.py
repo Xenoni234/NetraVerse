@@ -193,7 +193,7 @@ def sequences_for_split(windows, target, cfg=None):
         return None
 
 
-def to_loader(batch: W.SequenceBatch, scaler, batch_size, shuffle):
+def to_loader(batch: W.SequenceBatch, scaler, batch_size, shuffle, *, episode_balanced: bool = False):
     x = W.apply_scaler(batch.x, scaler)
     # Scale the STATE TARGETS with the same scaler (same F columns/order), else the
     # Gaussian NLL tries to predict raw byte-counts in the millions and explodes,
@@ -207,6 +207,20 @@ def to_loader(batch: W.SequenceBatch, scaler, batch_size, shuffle):
         torch.from_numpy(W.apply_scaler(batch.future, scaler)) if batch.future is not None
         else torch.empty(len(x), 0, x.shape[-1]),
     )
+    if episode_balanced and shuffle:
+        meta = batch.meta
+        if "episode_id" in meta:
+            keys = meta["episode_id"].astype("string")
+        else:
+            keys = meta["campaign_id"].astype("string") + "|" + meta["entity_id"].astype("string")
+        counts = keys.value_counts()
+        # Copy because pandas may expose a read-only NumPy view; PyTorch's
+        # sampler needs an owning, writable array for its tensor conversion.
+        weights = keys.map(lambda key: 1.0 / counts[key]).to_numpy(dtype="float64").copy()
+        sampler = torch.utils.data.WeightedRandomSampler(
+            torch.as_tensor(weights, dtype=torch.double), num_samples=len(weights), replacement=True
+        )
+        return DataLoader(ds, batch_size=batch_size, sampler=sampler, drop_last=False)
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=False)
 
 

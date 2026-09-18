@@ -1,16 +1,32 @@
-# Demo upload samples
+# Demo capture samples (real CIC-IDS2017 slices)
 
-Drop these into the demo's **Upload capture** box (CSV path) to exercise the file-upload
-forecasting path with real CIC-IDS2017 traffic (not synthetic — the model only reacts to
-real flow distributions).
+Upload any of these on the Simulate page. Each is a raw slice of a CIC-IDS2017
+TrafficLabelling day (original CICFlowMeter columns), keeping a benign lead-in
+before the labelled attack. Nothing is synthetic.
 
-## sample_webattack_192.168.10.8.csv
-- Real host `192.168.10.8` from CIC-IDS2017 Thursday (Web-attack / infiltration day).
-- ~4,000 flows, 16 per-host 30 s windows (benign lead-in then attack).
-- Expected: forecast risk climbs and crosses the alert threshold (peak ~0.92 at +120 s),
-  ATT&CK stage advances toward INITIAL_ACCESS, and the SHAP + attention panels populate.
-- Format is the raw CIC-IDS2017 CICFlowMeter CSV; `src/inference/live.py` auto-detects the
-  column map and builds the same 43-feature windows the model was trained on.
+| File | Attack type | ATT&CK stage | Rows | Attack rows | Benign lead |
+|------|-------------|--------------|------|-------------|-------------|
+| `portscan_recon.csv` | Port scan | Reconnaissance | 80000 | 158930 | 1463 |
+| `botnet_c2.csv` | Botnet | Command & Control | 80000 | 1966 | 24072 |
+| `ddos_impact.csv` | DDoS | Impact | 80000 | 128027 | 18883 |
+| `dos_hulk_impact.csv` | DoS Hulk | Impact | 80000 | 231073 | 30000 |
+| `ftp_bruteforce_initial_access.csv` | FTP brute force | Initial Access | 80000 | 7938 | 11347 |
+| `ssh_bruteforce_initial_access.csv` | SSH brute force | Initial Access | 80000 | 5897 | 30000 |
+| `infiltration_lateral.csv` | Infiltration | Lateral Movement | 80000 | 36 | 30000 |
+| `webattack_initial_access.csv` | Web attack | Initial Access | 80000 | 2180 | 12637 |
 
-To regenerate or make others, export any real attacked host's flows from a CIC-IDS2017 day
-(keep the original CICFlowMeter column headers).
+> Forecast behaviour (before-onset vs at-onset) is model-dependent; verify by upload.
+
+## Verified behaviour on the current `wm_final` model (auto-selected host)
+
+| File | Top-host peak risk | Fires alert? | Notes |
+|------|--------------------|--------------|-------|
+| `ftp_bruteforce_initial_access.csv` | ~0.94 | **yes (strong)** | Risk rises 0.51 → 0.77 → 0.94 across horizons. Best demo. |
+| `portscan_recon.csv` | ~0.39 | yes | Crosses the 0.28 threshold; short benign lead-in. |
+| `botnet_c2.csv` | ~0.00 (this host) | no | The bot victim is not the auto-selected host; pick another, or improve after retrain. |
+| `ddos_impact.csv` | ~0.00 | no | DDoS/DoS onset is not forecast by the current model (data ceiling — see roadmap). |
+| others | not yet verified | — | Verify by upload; DoS/infiltration/web likely weak until retrain. |
+
+The stage head predicts BENIGN on most of these even when the **risk** head fires — the onset-risk
+forecast (the headline) is the strong signal; the stage label is a known weak point. Retraining
+(see `scripts/train_world_model.py`) targets broader attack-type coverage.

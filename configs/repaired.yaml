@@ -1,5 +1,8 @@
 seed: 1337
 output: models/wm_repaired
+pretrained_encoder: null
+synthetic_sequence: null
+synthetic_fraction: 0.25
 sequence_prefix: data/processed/repaired
 window_cache: data/processed/windows_repaired_cicids2017_v2.parquet
 batch_size: 256

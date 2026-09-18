@@ -12,7 +12,8 @@ const routeDocuments = {
   "/investigate": "src/pages/Investigate/index.html",
   "/network": "src/pages/Network/index.html",
   "/validate": "src/pages/Validate/index.html",
-  "/model": "src/pages/Model/index.html"
+  "/model": "src/pages/Model/index.html",
+  "/live": "src/pages/Live/index.html"
 };
 
 export default defineConfig({

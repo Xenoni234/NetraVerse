@@ -19,7 +19,7 @@
 
   /* ---------------- helpers ---------------- */
   const api = {
-    async get(p) { const r = await fetch(BASE + p); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); },
+    async get(p) { const r = await fetch(BASE + p); if (!r.ok) { const body = await r.json().catch(() => ({})); const detail = typeof body.detail === "string" ? body.detail : body.detail ? JSON.stringify(body.detail) : r.statusText; throw new Error(detail); } return r.json(); },
     async upload(file) { const fd = new FormData(); fd.append("file", file); const r = await fetch(BASE + "/api/upload", { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); },
   };
   const h = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -29,6 +29,17 @@
   const hhmmss = (iso) => (iso ? String(iso).slice(11, 19) : "—");
   const cap = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase() : s);
   const stageName = (s) => cap(String(s || "").replace(/_/g, " "));
+  const REPLAY_STAGE_META = [
+    ["BENIGN", "Benign", "#94a3b8"],
+    ["RECONNAISSANCE", "Reconnaissance", "#0284c7"],
+    ["INITIAL ACCESS", "Initial Access", "#7c3aed"],
+    ["LATERAL MOVEMENT", "Lateral Movement", "#0d9488"],
+    ["COMMAND AND CONTROL", "Command & Control", "#dc2626"],
+    ["EXFILTRATION", "Exfiltration", "#ea580c"],
+    ["IMPACT", "Impact", "#be123c"],
+  ];
+  const replayStageColor = (stage) =>
+    (REPLAY_STAGE_META.find(([key]) => key === String(stage || "").toUpperCase()) || ["", "", "#64748b"])[2];
 
   /* header context bar + sidebar status */
   const setText = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.textContent = v; };
@@ -191,6 +202,248 @@
     </svg></div>`;
   }
 
+  function networkSpark(values, color = "#0284c7", labels = [], unit = "") {
+    const vals = (values || []).map((value) => Number.isFinite(+value) ? +value : 0);
+    const n = vals.length; if (!n) return `<div class="nv-empty">No data.</div>`;
+    const W = 900, H = 250, padL = 58, padR = 22, padT = 24, padB = 38;
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const max = Math.max(1e-9, ...vals), min = Math.min(0, ...vals), span = max - min || 1;
+    const x = (i) => padL + (n === 1 ? iw / 2 : i / (n - 1) * iw);
+    const y = (v) => padT + (1 - (v - min) / span) * ih;
+    const fmt = (v) => (+v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const line = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    const area = `${padL},${padT + ih} ${line} ${x(n - 1).toFixed(1)},${padT + ih}`;
+    let grid = "";
+    [0, 0.5, 1].forEach((ratio) => {
+      const value = min + span * ratio, yy = y(value);
+      grid += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#e2e8f0"/><text x="${padL - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="#64748b" font-family="IBM Plex Mono">${fmt(value)}</text>`;
+    });
+    const pointLabels = vals.map((value, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(value).toFixed(1)}" r="${i === n - 1 ? 5 : 2.5}" fill="${color}" stroke="#fff" stroke-width="1"><title>${labels[i] || `window ${i + 1}`} · ${fmt(value)}${unit ? ` ${unit}` : ""}</title></circle>`).join("");
+    const labelIndexes = [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
+    const timeLabels = labelIndexes.map((i) => `<text x="${x(i)}" y="${H - 10}" text-anchor="middle" font-size="11" fill="#475569" font-family="IBM Plex Mono">${esc(labels[i] || `window ${i + 1}`)}</text>`).join("");
+    return `<div class="nv-chart nv-network-chart"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Network telemetry over time">
+      ${grid}<polygon points="${area}" fill="${color}" opacity="0.08"/><polyline points="${line}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${pointLabels}
+      <text x="${padL}" y="14" font-size="11" fill="#475569" font-family="IBM Plex Mono">max ${fmt(max)}${unit ? ` ${unit}` : ""}</text>${timeLabels}
+    </svg></div>`;
+  }
+
+  /* ---------------- streaming replay (causal, step-by-step) ---------------- */
+  function idxBands(d, times) {
+    const out = [];
+    (d.attack_intervals || []).forEach(([a, b]) => {
+      const ta = Date.parse(a), tb = Date.parse(b);
+      let lo = times.findIndex((t) => t >= ta); if (lo < 0) return;
+      let hi = times.findIndex((t) => t > tb); if (hi < 0) hi = times.length;
+      out.push([lo, Math.max(lo, hi - 1)]);
+    });
+    return out;
+  }
+  function revealChart(d, step) {
+    const obs = d.observed || [], n = obs.length;
+    const W = 860, H = 200, padL = 40, padR = 16, padT = 14, padB = 30;
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const x = (i) => padL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+    const y = (v) => padT + (1 - Math.min(1, v)) * ih;
+    const times = obs.map((o) => Date.parse(o.t));
+    const bands = idxBands(d, times).filter(([lo]) => lo <= step)
+      .map(([lo, hi]) => `<rect x="${x(lo).toFixed(1)}" y="${padT}" width="${(x(Math.min(hi, step)) - x(lo) || 3).toFixed(1)}" height="${ih}" fill="#fca5a5" opacity="0.28"/>`).join("");
+    const pts = obs.slice(0, step + 1).map((o, i) => `${x(i).toFixed(1)},${y(o.risk).toFixed(1)}`).join(" ");
+    const thrY = y(d.threshold);
+    let grid = "";
+    [0, 0.5, 1].forEach((g) => { grid += `<line x1="${padL}" y1="${y(g)}" x2="${W - padR}" y2="${y(g)}" stroke="#f1f5f9"/><text x="${padL - 6}" y="${y(g) + 3}" text-anchor="end" font-size="9" fill="#94a3b8" font-family="IBM Plex Mono">${g.toFixed(1)}</text>`; });
+    const cur = obs[step];
+    const cursor = `<line x1="${x(step).toFixed(1)}" y1="${padT}" x2="${x(step).toFixed(1)}" y2="${padT + ih}" stroke="#0284c7" stroke-width="1.5"/><circle cx="${x(step).toFixed(1)}" cy="${y(cur.risk).toFixed(1)}" r="4.5" fill="#0284c7" stroke="#fff" stroke-width="1.5"/>`;
+    return `<div class="nv-chart"><svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+      ${grid}${bands}
+      <line x1="${padL}" y1="${thrY}" x2="${W - padR}" y2="${thrY}" stroke="#d97706" stroke-dasharray="5 4" stroke-width="1.2"/>
+      <text x="${W - padR}" y="${thrY - 4}" text-anchor="end" font-size="9" fill="#b45309" font-family="IBM Plex Mono">alert ${d.threshold}</text>
+      <polyline points="${pts}" fill="none" stroke="#0284c7" stroke-width="2.4"/>${cursor}
+      <text x="${x(step).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" fill="#0284c7" font-family="IBM Plex Mono">now ${hhmmss(cur.t)}</text>
+    </svg></div>`;
+  }
+  function temporalGraph(d, step) {
+    const obs = d.observed || []; if (!obs.length) return `<div class="nv-empty">No graphable windows.</div>`;
+    const visible = obs.slice(0, Math.max(0, step + 1));
+    const W = 920, H = 250, left = 46, right = 18, top = 38, bottom = 44;
+    const x = (i) => left + (visible.length === 1 ? (W-left-right)/2 : i/(visible.length-1)*(W-left-right));
+    const stageColor = (s) => ({BENIGN:"#94a3b8",RECONNAISSANCE:"#0284c7", "INITIAL ACCESS":"#7c3aed", "LATERAL MOVEMENT":"#0d9488", "COMMAND AND CONTROL":"#dc2626", EXFILTRATION:"#ea580c", IMPACT:"#be123c"}[String(s).toUpperCase()] || "#64748b");
+    const displayStage = (o) => d.ground_truth && o.observed_stage ? o.observed_stage : o.stage;
+    const lines = visible.slice(1).map((o,i) => `<line x1="${x(i)}" y1="125" x2="${x(i+1)}" y2="125" stroke="#cbd5e1" stroke-width="2"/>`).join("");
+    const labelEvery = Math.max(1, Math.ceil(visible.length / 12));
+    const nodes = visible.map((o,i) => { const current = i === visible.length-1; const stage = displayStage(o); const r = 5 + Math.round((o.risk||0)*8); return `<g><circle cx="${x(i)}" cy="125" r="${current?r+3:r}" fill="${stageColor(stage)}" opacity="${current?1:.82}" stroke="${current?"#0f172a":"#fff"}" stroke-width="${current?2:1.5}"><title>${hhmmss(o.t)} · ${stageName(stage)} · forecast ${pct(o.risk)}${d.ground_truth && o.observed_stage ? " · recorded stage" : ""}</title></circle>${(i===0||i===visible.length-1||i%labelEvery===0)?`<text x="${x(i)}" y="156" text-anchor="middle" font-size="9" fill="#475569" font-family="IBM Plex Mono">${hhmmss(o.t)}</text><text x="${x(i)}" y="176" text-anchor="middle" font-size="8" fill="#64748b">${esc(stageName(stage))}</text>`:""}</g>`; }).join("");
+    const future = obs.length > visible.length ? `<text x="${W-right}" y="22" text-anchor="end" font-size="10" fill="#64748b" font-family="IBM Plex Mono">future windows hidden until replay</text>` : `<text x="${W-right}" y="22" text-anchor="end" font-size="10" fill="#0f766e" font-family="IBM Plex Mono">observed timeline complete</text>`;
+    return `<div class="nv-temporal-graph"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Temporal network replay graph"><line x1="${left}" y1="125" x2="${W-right}" y2="125" stroke="#e2e8f0"/>${lines}${nodes}${future}<text x="${left}" y="218" font-size="9" fill="#94a3b8" font-family="IBM Plex Mono">sequential observed windows · node size = risk</text></svg></div>`;
+  }
+  function temporalGraphScrollable(d, step) {
+    const obs = d.observed || [];
+    if (!obs.length) return `<div class="nv-empty">No graphable windows.</div>`;
+    const visible = obs.slice(0, Math.max(0, step + 1));
+    const H = 250, left = 46, right = 18;
+    const W = Math.max(1100, left + right + Math.max(0, visible.length - 1) * 34);
+    const x = (i) => left + (visible.length === 1 ? (W - left - right) / 2 : i / (visible.length - 1) * (W - left - right));
+    const displayStage = (o) => d.ground_truth && o.observed_stage ? o.observed_stage : o.stage;
+    const lines = visible.slice(1).map((o, i) => `<line x1="${x(i)}" y1="125" x2="${x(i + 1)}" y2="125" stroke="#cbd5e1" stroke-width="2"/>`).join("");
+    const alertEvents = (d.alert_events || []).map((event) => ({ ...event,
+      index: event.alert_at ? obs.findIndex((o) => Date.parse(o.t) >= Date.parse(event.alert_at)) : -1,
+    })).filter((event) => event.index >= 0 && event.index < visible.length);
+    const primaryAlert = alertEvents.find((event) => event.status !== "missed") || alertEvents[0];
+    const alertMarkers = alertEvents.map((event) => {
+      const lead = event.lead_time_s == null ? "" : ` · ${event.lead_time_s}s early`;
+      const label = event === primaryAlert ? `<text x="${x(event.index)}" y="30" text-anchor="middle" font-size="10" font-weight="700" fill="#b91c1c" font-family="IBM Plex Mono">PREDICTION</text><text x="${x(event.index)}" y="45" text-anchor="middle" font-size="8" fill="#b91c1c" font-family="IBM Plex Mono">alert raised${esc(lead)}</text>` : "";
+      return `<g class="nv-graph-alert-marker"><line x1="${x(event.index)}" y1="50" x2="${x(event.index)}" y2="116" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3"/><circle cx="${x(event.index)}" cy="50" r="3" fill="#dc2626"><title>Prediction raised at ${hhmmss(event.alert_at)}${esc(lead)}</title></circle>${label}</g>`;
+    }).join("");
+    const labelEvery = Math.max(1, Math.ceil(visible.length / 12));
+    const nodes = visible.map((o, i) => {
+      const current = i === visible.length - 1;
+      const stage = displayStage(o);
+      const color = replayStageColor(stage);
+      const radius = 5 + Math.round((o.risk || 0) * 8);
+      const recorded = d.ground_truth && o.observed_stage ? " · recorded stage" : " · predicted stage";
+      const label = `${hhmmss(o.t)} · ${stageName(stage)} · forecast ${pct(o.risk)}${recorded}`;
+      const labels = (i === 0 || current || i % labelEvery === 0)
+        ? `<text x="${x(i)}" y="156" text-anchor="middle" font-size="9" fill="#475569" font-family="IBM Plex Mono">${hhmmss(o.t)}</text><text x="${x(i)}" y="176" text-anchor="middle" font-size="8" fill="#64748b">${esc(stageName(stage))}</text>` : "";
+      const prediction = alertEvents.some((event) => event.index === i);
+      const nodeLabel = prediction ? `${label} · prediction raised here` : label;
+      return `<g class="nv-graph-node${current ? " current" : ""}${prediction ? " prediction-node" : ""}" data-node-index="${i}" tabindex="0" role="button" aria-label="${esc(nodeLabel)}"><circle cx="${x(i)}" cy="125" r="${current ? radius + 3 : radius}" fill="${color}" opacity="${current ? 1 : .82}" stroke="${prediction ? "#dc2626" : current ? "#0f172a" : "#fff"}" stroke-width="${prediction ? 2.5 : current ? 2 : 1.5}"><title>${esc(nodeLabel)}</title></circle>${labels}</g>`;
+    }).join("");
+    const future = obs.length > visible.length
+      ? `<text x="${W - right}" y="22" text-anchor="end" font-size="10" fill="#64748b" font-family="IBM Plex Mono">future windows hidden until replay</text>`
+      : `<text x="${W - right}" y="22" text-anchor="end" font-size="10" fill="#0f766e" font-family="IBM Plex Mono">observed timeline complete</text>`;
+    const legend = REPLAY_STAGE_META.map(([key, label, color]) => `<span class="nv-graph-legend-item"><i style="background:${color}"></i>${esc(label)}</span>`).join("");
+    return `<div class="nv-temporal-graph">
+      <div class="nv-graph-header"><span class="nv-mono">temporal network · ${visible.length} observed window${visible.length === 1 ? "" : "s"}</span><span>scroll horizontally · hover a node for state details</span></div>
+      <div class="nv-graph-scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Scrollable temporal network replay graph"><line x1="${left}" y1="125" x2="${W - right}" y2="125" stroke="#e2e8f0"/>${lines}${alertMarkers}${nodes}${future}<text x="${left}" y="218" font-size="9" fill="#94a3b8" font-family="IBM Plex Mono">sequential observed windows · node size = risk</text></svg></div>
+      <div class="nv-graph-legend">${legend}</div>
+      <div class="nv-graph-detail" data-graph-detail>Hover a node to inspect its time, stage, risk, and replay state.</div>
+    </div>`;
+  }
+
+  function replayPlayer(mount, d, onUpdate, onComplete, initialStep = 0, onReset = null) {
+    if (!mount) return;
+    const obs = d.observed || [];
+    if (!obs.length) { mount.innerHTML = `<div class="nv-empty">No forecastable windows to replay.</div>`; return; }
+    const n = obs.length, thr = d.threshold, times = obs.map((o) => Date.parse(o.t));
+    const bands = idxBands(d, times), firstOnset = bands.length ? bands[0][0] : null;
+    // Use the server's guarded first-sustained-alert window + lead time (honest, matches the API,
+    // and avoids counting an early spurious threshold crossing as the alert).
+    const events = (d.alert_events || []).map((e) => ({ ...e,
+      alertIdx: e.alert_at ? obs.findIndex((o) => Date.parse(o.t) >= Date.parse(e.alert_at)) : -1,
+      onsetIdx: e.onset_at ? obs.findIndex((o) => Date.parse(o.t) >= Date.parse(e.onset_at)) : -1,
+    }));
+    const alertIdx = events.find((e) => e.alertIdx >= 0)?.alertIdx ?? -1;
+    const inBand = (i) => bands.some(([lo, hi]) => i >= lo && i <= hi);
+    // Per-window state reflects the current forecast, not a latched flag.
+    const state = (i) => inBand(i) ? "ATTACK_ACTIVE"
+      : (obs[i].risk >= thr && i > 0 && obs[i - 1].risk >= thr) ? "ALERTING"
+      : (obs[i].risk >= thr * 0.6) ? "ELEVATED" : "QUIET";
+    const stCls = { QUIET: "observed", ELEVATED: "elevated", ALERTING: "critical", ATTACK_ACTIVE: "critical" };
+    const SPEEDS = [0.5, 1, 2, 4];
+    let step = Math.min(n - 1, Math.max(0, Number(initialStep) || 0)), playing = false, speed = 1, timer = null;
+    function leadTxtLegacy(i) {
+      if (alertIdx < 0) return d.ground_truth ? "no sustained alert" : "monitoring (unlabelled upload)";
+      if (i < alertIdx) return "monitoring…";
+      if (firstOnset != null && i >= firstOnset) {
+        return serverLead == null ? "alerted at onset"
+          : serverLead > 0 ? `warned ${serverLead}s BEFORE onset`
+          : serverLead < 0 ? `detected ${Math.abs(serverLead)}s after onset` : "alerted at onset";
+      }
+      if (firstOnset != null) return `⚠ first alert ${hhmmss(d.first_alert)} — onset in ${Math.round((times[firstOnset] - times[i]) / 1000)} s`;
+      return `⚠ first alert ${hhmmss(d.first_alert)} · onset unlabelled`;
+    }
+    // Decision log is event-based: it reports the exact alert decision and
+    // its lead time for the relevant onset, never a stale global first alert.
+    function leadTxt(i) {
+      if (!d.ground_truth) return "monitoring (unlabelled upload)";
+      if (!events.length) return "no labelled attack event";
+      const active = events.find((e) => e.alertIdx >= 0 && i >= e.alertIdx && (e.onsetIdx < 0 || i <= e.onsetIdx));
+      const upcoming = events.find((e) => e.onsetIdx < 0 || i < e.onsetIdx);
+      const e = active || upcoming;
+      if (!e) return "all labelled attack events processed";
+      if (e.alertIdx >= 0 && i >= e.alertIdx) {
+        const lead = e.lead_time_s == null ? "n/a" : `${e.lead_time_s}s`;
+        const decision = e.action?.summary ? ` · ${e.action.summary}` : "";
+        if (e.onsetIdx >= 0 && i >= e.onsetIdx) return `onset reached · alert raised ${hhmmss(e.alert_at)} · lead ${lead}${decision}`;
+        return e.status === "early_warning" ? `ALERT RAISED ${hhmmss(e.alert_at)} · warning lead ${lead}${decision}` : `ALERT RAISED ${hhmmss(e.alert_at)} · ${e.status}${decision}`;
+      }
+      return "monitoring";
+    }
+    function liveDecisionSupport(event) {
+      if (!event || event.alertIdx < 0) return "";
+      const action = event.action || {};
+      const actions = (action.actions || []).slice(0, 3).map((item) => `<li>${esc(item)}</li>`).join("");
+      const mitigations = (action.mitre_mitigations || []).map((item) => `<span class="nv-chip">${esc(item)}</span>`).join("");
+      const color = replayStageColor(event.stage);
+      return `<div class="nv-live-decision" style="--nv-stage-color:${color}">
+        <div class="nv-live-decision-head"><strong>Decision support · ${esc(stageName(event.stage))}</strong><span class="nv-badge critical">ALERT ACTIVE</span></div>
+        <p>${esc(action.summary || "Investigate the alert and follow the approved response workflow.")}</p>
+        ${actions ? `<ul class="nv-actions">${actions}</ul>` : ""}
+        ${mitigations ? `<div class="nv-live-mitigations">${mitigations}</div>` : ""}
+        <small>Advisory only · human approval required · warning lead ${event.lead_time_s == null ? "n/a" : `${event.lead_time_s}s`}</small>
+      </div>`;
+    }
+    function render() {
+      const cur = obs[step], st = state(step), activeEvent = events.find((e) => e.alertIdx >= 0 && step >= e.alertIdx && (e.onsetIdx < 0 || step <= e.onsetIdx)), warnAhead = Boolean(activeEvent && activeEvent.status === "early_warning");
+      const shownStage = activeEvent?.stage || cur.stage;
+      mount.innerHTML = `<div class="nv-replay">
+        <div class="nv-replay-bar">
+          <button class="nv-btn" data-a="playpause">${playing ? "❚❚ Pause" : "▶ Play"}</button>
+          <button class="nv-btn sec" data-a="back" title="Step back">◀</button>
+          <button class="nv-btn sec" data-a="fwd" title="Step forward">▶</button>
+          <button class="nv-btn sec" data-a="restart" title="Restart">⟲</button>
+          <span class="nv-replay-speed">${SPEEDS.map((s) => `<button class="nv-chip ${s === speed ? "warn" : ""}" data-speed="${s}">${s}×</button>`).join("")}</span>
+          <span class="nv-replay-clock nv-mono">window ${step + 1}/${n}</span>
+        </div>
+        <div class="nv-replay-status">
+          <span class="nv-badge ${stCls[st]}"><span class="dot"></span>${st.replace("_", " ")}</span>
+          <span class="nv-mono">forecast risk ${pct(cur.risk)}</span>
+          ${stageBadge(shownStage, activeEvent ? "critical" : undefined)}
+          <span class="nv-mono ${warnAhead ? "nv-lead-hot" : ""}">${leadTxt(step)}</span>
+        </div>
+        ${liveDecisionSupport(activeEvent)}
+        ${temporalGraphScrollable(d, step)}
+        <input class="nv-replay-scrub" type="range" min="0" max="${n - 1}" value="${step}" aria-label="replay position"/>
+        <p class="nv-note">Causal replay — at each step the model uses only windows ≤ now. The alert can fire <b>before</b> the shaded attack window is revealed; that gap is the warning lead time.</p>
+      </div>`;
+      const graphDetail = mount.querySelector("[data-graph-detail]");
+      const graphNodes = mount.querySelectorAll("[data-node-index]");
+      const showNode = (index) => {
+        if (!graphDetail || !obs[index]) return;
+        const item = obs[index];
+        const itemStage = d.ground_truth && item.observed_stage ? item.observed_stage : item.stage;
+        const itemEvent = events.find((e) => e.alertIdx === index);
+        const itemState = itemEvent && itemEvent.alertIdx >= 0 && index >= itemEvent.alertIdx ? "ALERT DECISION" : state(index).replace("_", " ");
+        graphDetail.innerHTML = `<b>${esc(hhmmss(item.t))}</b><span>${esc(stageName(itemStage))}</span><span>risk ${pct(item.risk)}</span><span>${esc(itemState)}</span><em>${d.ground_truth && item.observed_stage ? "recorded stage" : "model forecast"}</em>`;
+      };
+      graphNodes.forEach((node) => {
+        const index = Number(node.dataset.nodeIndex);
+        node.addEventListener("mouseenter", () => showNode(index));
+        node.addEventListener("focus", () => showNode(index));
+      });
+      showNode(step);
+      const graphScroll = mount.querySelector(".nv-graph-scroll");
+      const currentNode = mount.querySelector(".nv-graph-node.current");
+      if (graphScroll && currentNode && graphScroll.scrollWidth > graphScroll.clientWidth) {
+        const nodeBox = currentNode.getBoundingClientRect();
+        const graphBox = graphScroll.getBoundingClientRect();
+        graphScroll.scrollLeft = Math.max(0, graphScroll.scrollLeft + nodeBox.left - graphBox.left - graphBox.width * 0.62);
+      }
+      mount.querySelectorAll("[data-a]").forEach((b) => b.addEventListener("click", () => action(b.dataset.a)));
+      mount.querySelectorAll("[data-speed]").forEach((b) => b.addEventListener("click", () => { speed = +b.dataset.speed; if (playing) { stop(); play(); } else render(); }));
+      const scrub = mount.querySelector(".nv-replay-scrub");
+      scrub.addEventListener("input", () => { stop(); step = +scrub.value; render(); });
+      if (onUpdate) onUpdate(cur, step);
+    }
+    function action(a) {
+      if (a === "playpause") playing ? stop() : play();
+      else if (a === "fwd") { stop(); step = Math.min(n - 1, step + 1); render(); if (step === n - 1 && onComplete) onComplete(); }
+      else if (a === "back") { stop(); step = Math.max(0, step - 1); render(); }
+      else if (a === "restart") { stop(); step = 0; if (onReset) onReset(); render(); }
+    }
+    function play() { playing = true; render(); timer = setInterval(() => { if (step >= n - 1) { stop(); if (onComplete) onComplete(); render(); return; } step++; render(); }, 900 / speed); }
+    function stop() { playing = false; if (timer) { clearInterval(timer); timer = null; } }
+    render();
+  }
+
   /* ---------------- scenario picker ---------------- */
   async function pickerControls(sel) {
     if (sel.upload_id) {
@@ -217,7 +470,7 @@
   async function currentSelection() {
     let sel = store.sel;
     if (sel && sel.upload_id) {
-      try { sel.fc = await api.get(`/api/upload/${sel.upload_id}/forecast?host=${encodeURIComponent(sel.host)}&mc=20`); return sel; }
+      try { sel.fc = await api.get(`/api/upload/${sel.upload_id}/forecast?host=${encodeURIComponent(sel.host)}&mc=20`); sel.fc.upload_id = sel.upload_id; return sel; }
       catch { sel = null; }
     }
     if (!sel) {
@@ -245,32 +498,176 @@
     const flow = `<div class="nv-flow">
       <div class="nv-step now"><div class="hz">S_t · now</div><div class="st">${esc(stageName((d.observed.find(o=>o.t===d.focus_at)||{}).stage || d.forecast[0]?.stage))}</div><div class="rk">${pct(focusRisk)}</div><div class="meta">observed current state</div></div>
       ${steps.map((s, i) => `<span class="nv-arrow">→</span>
-        <div class="nv-step ${i === steps.length - 1 ? "focus" : ""}"><div class="hz">S_t+${[1,2,4][i] ?? i+1} · ${esc(s.horizon)}</div><div class="st">${esc(stageName(s.stage))}</div><div class="rk">${pct(s.risk)}</div><div class="meta">${esc(s.tactic || "no ATT&CK tactic")} · ${esc(s.confidence)}${s.uncertainty != null ? " · ±" + pct(s.uncertainty) : ""}</div></div>`).join("")}
+        <div class="nv-step ${i === steps.length - 1 ? "focus" : ""}"><div class="hz">S_t+${d.horizon_steps?.[i] ?? i+1} · ${esc(s.horizon)}</div><div class="st">${esc(stageName(s.stage))}</div><div class="rk">${pct(s.risk)}</div><div class="meta">${esc(s.tactic || "no ATT&CK tactic")} · ${esc(s.confidence)}${s.uncertainty != null ? " · ±" + pct(s.uncertainty) : ""}</div></div>`).join("")}
     </div>`;
     return flow;
+  }
+
+  function rolloutForWindow(d, row) {
+    const selected = row || (d.observed || []).find((o) => o.t === d.focus_at) || (d.observed || [])[0] || {};
+    const steps = (d.horizons || []).map((h, i) => {
+      const value = selected.horizons?.[h] || (selected.t === d.focus_at ? d.forecast?.[i] : null) || {};
+      return {
+        horizon: h,
+        utc: value.utc || null,
+        risk: value.risk,
+        stage: value.stage || "UNMAPPED",
+        tactic: value.tactic || "",
+        confidence: value.confidence || (value.risk >= d.threshold ? "High" : "Low"),
+        uncertainty: value.uncertainty,
+      };
+    });
+    return { selected, steps };
+  }
+
+  function forecastNodeForWindow(d, row) {
+    const rollout = rolloutForWindow(d, row);
+    const selected = rollout.selected;
+    const steps = rollout.steps;
+    const selectedIndex = Math.max(0, (d.observed || []).indexOf(selected));
+    const selectedStage = d.ground_truth && selected.observed_stage ? selected.observed_stage : selected.stage;
+    const selectedLabel = selected.t === d.focus_at ? "peak-risk focus · recommended" : "user-selected origin";
+    return `<div class="nv-flow">
+      <div class="nv-step now"><div class="hz">S_t · window ${selectedIndex + 1}</div><div class="st">${esc(stageName(selectedStage))}</div><div class="rk">${pct(selected.risk)}</div><div class="meta">${esc(hhmmss(selected.t))} · ${selectedLabel} · +120s forecast risk</div></div>
+      ${steps.map((s, i) => `<span class="nv-arrow">→</span>
+        <div class="nv-step ${i === steps.length - 1 ? "focus" : ""}"><div class="hz">S_t+${d.horizon_steps?.[i] ?? i+1} · ${esc(s.horizon)}</div><div class="st">${esc(stageName(s.stage))}</div><div class="rk">${pct(s.risk)}</div><div class="meta">${esc(s.tactic || "no ATT&CK tactic")} · ${esc(s.confidence)}${s.uncertainty != null ? " · ±" + pct(s.uncertainty) : ""}</div></div>`).join("")}
+    </div>`;
+  }
+
+  function rolloutWindowPicker(d) {
+    const selectedAt = d.focus_at || (d.observed?.[0] || {}).t;
+    const width = String((d.observed || []).length).length;
+    const options = (d.observed || []).map((o, i) => {
+      const label = `${String(i + 1).padStart(width, "0")} · ${hhmmss(o.t)} · ${stageName(o.stage)} · +120s ${pct(o.risk)}`;
+      return `<option value="${esc(o.t)}"${o.t === selectedAt ? " selected" : ""}>${esc(label)}${o.t === d.focus_at ? " · PEAK-RISK FOCUS" : ""}</option>`;
+    }).join("");
+    return `<div class="nv-rollout-picker"><label for="nv-rollout-window"><b>Rollout origin window</b><span>Select any observed 30-second window to inspect its forecast.</span></label><select class="nv-select" id="nv-rollout-window" aria-label="Select rollout origin window">${options}</select></div>`;
   }
 
   function forecastPage(content, d) {
     ctxFromForecast(d);
     const steps = d.forecast || [];
     content.innerHTML =
+      `<div id="nv-replay-pending">${card("Replay result", `<p class="nv-note">Peak risk, full progression and lead time will appear when replay reaches the end.</p><div id="nv-current-replay"></div>`)}</div>` +
+      section("Live replay", "Streaming forecast â€” step by step",
+        "Play the capture forward one 30-second window at a time and watch the forecast rise and alert before the attack lands.",
+        `<div id="nv-replay-host"></div>`, "accent") +
+      `<div id="nv-deferred" style="display:none">` +
       plainBlock(d.plain_language) +
       card("", `<div class="nv-grid">
         ${metric("Current state", riskBadge(d.peak_risk, d.threshold))}
         ${metric("Peak onset risk", pct(d.peak_risk), { cls: d.peak_risk >= d.threshold ? "alert" : "" })}
         ${metric("Alert threshold", d.threshold)}
-        ${metric(d.ground_truth ? "Warning lead time" : "Mode", `<small>${esc(leadLabel(d))}</small>`)}
+        ${metric("Alert level", `<small>${esc((d.alert_level || "none").toUpperCase())}</small>`, { cls: d.alert_level && d.alert_level !== "none" ? "alert" : "" })}
       </div>`) +
+      section("Live replay", "Streaming forecast — step by step",
+        "Play the capture forward one 30-second window at a time and watch the forecast rise and alert before the attack lands.",
+        `<div id="nv-replay-host"></div>`, "accent") +
       section("K-step rollout", "Current state → future states",
         "The world model rolls the current network state forward one window at a time and scores each projected future state for onset risk.",
-        forecastNode(d) + `<div style="margin-top:16px">${projectionChart(d.peak_risk, steps, d.threshold)}</div>` +
+        rolloutWindowPicker(d) + `<div id="nv-rollout-content"></div>` +
         caveat("Risk is a per-window onset score from the decoder's predicted future state — not a calibrated probability. Predicted stage is a model output, not a confirmed action.")) +
       section("Risk trajectory", "Forecast risk over the observed timeline",
         "Each point is the model's onset-risk forecast for that 30-second window across the replayed capture.",
         riskTimeline(d) +
         `<div class="nv-tablewrap" style="margin-top:14px"><table class="nv"><thead><tr><th>Horizon</th><th class="num">Forecast risk</th><th>Predicted stage</th><th>ATT&CK tactic</th><th>Confidence</th>${steps.some(s=>s.uncertainty!=null)?'<th class="num">± band</th>':''}</tr></thead>
         <tbody>${steps.map((s) => `<tr><td>${esc(s.horizon)}</td><td class="num">${pct(s.risk)}</td><td>${stageBadge(s.stage)}</td><td>${esc(s.tactic || "—")}</td><td>${esc(s.confidence)}</td>${s.uncertainty!=null?`<td class="num">±${pct(s.uncertainty)}</td>`:''}</tr>`).join("")}</tbody></table></div>`) +
-      card("", `<div class="nv-cta-row"><a class="nv-btn sec" href="/attack">ATT&CK trajectory</a><a class="nv-btn sec" href="/investigate">Why this forecast</a><a class="nv-btn sec" href="/network">Network evidence</a></div>`);
+      card("", `<div class="nv-cta-row"><a class="nv-btn sec" href="/attack">ATT&CK trajectory</a><a class="nv-btn sec" href="/investigate">Why this forecast</a><a class="nv-btn sec" href="/network">Network evidence</a></div>`) +
+      decisionLog(d) +
+      `<div id="nv-decision-support"></div></div>`;
+    const replayKey = `nv_replay_complete:${d.upload_id || d.scenario?.campaign || d.scenario?.dataset || "capture"}:${d.scenario?.host || "host"}`;
+    const updateCurrent = (cur, step) => { const el = document.getElementById("nv-current-replay"); if (el) el.innerHTML = `<div class="nv-current-replay"><span class="nv-mono">window ${step + 1}/${(d.observed || []).length}</span>${riskBadge(cur.risk, d.threshold)}${stageBadge(cur.stage)}<span class="nv-mono">${hhmmss(cur.t)}</span></div>`; };
+    const finish = () => { const pending = document.getElementById("nv-replay-pending"); if (pending) pending.style.display = "none"; const deferred = document.getElementById("nv-deferred"); if (deferred) deferred.style.display = "block"; try { sessionStorage.setItem(replayKey, "1"); } catch {} };
+    const resetReplay = () => { try { sessionStorage.removeItem(replayKey); } catch {} const pending = document.getElementById("nv-replay-pending"); if (pending) pending.style.display = "block"; const deferred = document.getElementById("nv-deferred"); if (deferred) deferred.style.display = "none"; };
+    const duplicateReplay = document.querySelector("#nv-deferred #nv-replay-host");
+    if (duplicateReplay && duplicateReplay.closest(".nv-section")) duplicateReplay.closest(".nv-section").remove();
+    const wasComplete = sessionStorage.getItem(replayKey) === "1";
+    if (wasComplete) finish();
+    replayPlayer(document.getElementById("nv-replay-host"), d, updateCurrent, finish, wasComplete ? (d.observed || []).length - 1 : 0, resetReplay);
+    const rolloutSelect = document.getElementById("nv-rollout-window");
+    const rolloutContent = document.getElementById("nv-rollout-content");
+    const rolloutKey = `nv_rollout_window:${d.upload_id || d.scenario?.campaign || d.scenario?.dataset || "capture"}:${d.scenario?.host || "host"}`;
+    let savedRolloutAt = null;
+    try { savedRolloutAt = sessionStorage.getItem(rolloutKey); } catch {}
+    const renderRollout = (at) => {
+      const row = (d.observed || []).find((o) => o.t === at) || (d.observed || []).find((o) => o.t === d.focus_at) || d.observed?.[0];
+      if (!row || !rolloutContent) return;
+      if (rolloutSelect && rolloutSelect.value !== row.t) rolloutSelect.value = row.t;
+      rolloutContent.innerHTML = forecastNodeForWindow(d, row) + `<div style="margin-top:16px">${projectionChart(row.risk, rolloutForWindow(d, row).steps, d.threshold)}</div>`;
+      try { sessionStorage.setItem(rolloutKey, row.t); } catch {}
+    };
+    if (rolloutSelect) {
+      rolloutSelect.addEventListener("change", () => renderRollout(rolloutSelect.value));
+      renderRollout(savedRolloutAt || rolloutSelect.value || d.focus_at);
+    }
+    if (d.ground_truth && d.scenario && d.scenario.campaign) {
+      api.get(decisionSupportUrl(d))
+        .then((ds) => { const el = document.getElementById("nv-decision-support"); if (el) el.innerHTML = defenderPanel(ds); })
+        .catch(() => {});
+    }
+  }
+
+  function decisionSupportUrl(d) {
+    const host = encodeURIComponent(d.scenario?.host || "");
+    if (d.upload_id) return `/api/decision-support?campaign=upload&upload_id=${encodeURIComponent(d.upload_id)}&host=${host}`;
+    return `/api/decision-support?campaign=${encodeURIComponent(d.scenario?.campaign || "")}&host=${host}`;
+  }
+
+  function decisionLog(d) {
+    const events = d.decision_log || d.alert_events || [];
+    if (!events.length) {
+      return section("Decision log", "Prediction decisions", "Every sustained alert decision is recorded here during replay.", `<div class="nv-empty">No sustained prediction alert was raised for this capture.</div>`);
+    }
+    const rows = events.map((event, i) => {
+      const action = event.action || {};
+      const lead = event.lead_time_s == null ? "n/a" : `${event.lead_time_s}s`;
+      const status = String(event.status || "prediction").replace(/_/g, " ");
+      return `<tr><td class="num">${i + 1}</td><td class="nv-mono">${hhmmss(event.alert_at || event.window_at)}</td><td>${stageBadge(event.stage, "critical")}</td><td class="num">${pct(event.risk)}</td><td>${esc(status)}</td><td>${esc(lead)}</td><td>${esc(action.summary || "Review and investigate the alert.")}</td></tr>`;
+    }).join("");
+    return section("Decision log", "Prediction decisions raised during replay", "Each row is a sustained model alert, with the stage, risk, timing and advisory response available at that decision point.",
+      `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>#</th><th>Alert time</th><th>Predicted stage</th><th class="num">Risk</th><th>Decision</th><th>Lead time</th><th>Advisory action</th></tr></thead><tbody>${rows}</tbody></table></div><p class="nv-caveat">Decision support is advisory only. It does not prove compromise or execute a network action.</p>`);
+  }
+
+  // Shared stage-mapped defender decision-support panel (advisory, human-approved).
+  function defenderPanel(ds) {
+    const pb = ds.playbook || {};
+    const stageCards = (ds.actions_by_stage || []).map((a) => card(stageName(a.stage), `<span class="nv-badge elevated">${esc(a.status || "guidance")}</span> <span class="nv-mono">${esc(a.tactic || "")}</span><p>${esc(a.summary || "")}</p><ul class="nv-actions">${(a.actions || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`)).join("");
+    return section("Defender decision support", "Recommended defensive action",
+      "Advisory only — every action requires human approval; nothing is executed on the network.",
+      card("", `<div class="nv-grid">
+          ${metric("Alert level", `<small>${esc((ds.alert_level || "none").toUpperCase())}</small>`, { cls: ds.alert_level && ds.alert_level !== "none" ? "alert" : "" })}
+          ${metric("Predicted stage", `<small>${esc(stageName(ds.predicted_stage || "BENIGN"))}</small>`, { sub: ds.stage_tactic || "" })}
+        </div>
+        <p class="nv-note" style="margin-top:10px"><b>${esc(pb.summary || ds.recommended_action || "")}</b></p>
+        ${(pb.actions || []).length ? `<ul class="nv-actions">${pb.actions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : ""}
+        ${(pb.mitre_mitigations || []).length ? `<div style="margin-top:8px">${pb.mitre_mitigations.map((m) => `<span class="nv-chip">${esc(m)}</span>`).join("")}</div>` : ""}
+        ${stageCards ? `<div class="nv-stage-actions">${stageCards}</div>` : ""}
+        <p class="nv-caveat">Human approval required · automated response not taken. ${esc((ds.limitations || [])[0] || "")}</p>`));
+  }
+
+  // MITRE kill-chain stage graph, highlighting only the stages the model actually predicts.
+  function killChainMap(d) {
+    const KILL = [
+      ["RECONNAISSANCE", "Reconnaissance", "TA0043"], ["INITIAL ACCESS", "Initial Access", "TA0001"],
+      ["LATERAL MOVEMENT", "Lateral Movement", "TA0008"], ["COMMAND AND CONTROL", "Command & Control", "TA0011"],
+      ["EXFILTRATION", "Exfiltration", "TA0010"], ["IMPACT", "Impact", "TA0040"],
+    ];
+    const seen = new Set([...(d.observed || []).map((o) => String((d.ground_truth && o.observed_stage) || o.stage).toUpperCase()),
+                          ...(d.forecast || []).map((s) => String(s.stage).toUpperCase())]);
+    const focusRow = (d.observed || []).find((o) => o.t === d.focus_at);
+    const focusStage = String((focusRow && focusRow.stage) || (d.forecast && (d.forecast.slice(-1)[0] || {}).stage) || "").toUpperCase();
+    const nodes = KILL.map(([key, label, tactic]) => {
+      const predicted = seen.has(key), focus = key === focusStage;
+      const cls = focus ? "focus" : predicted ? "predicted" : "idle";
+      return `<div class="nv-kc-node ${cls}" style="--nv-stage-color:${replayStageColor(key)}"><div class="nv-kc-tactic">${tactic}</div><div class="nv-kc-label">${label}</div>
+        <div class="nv-kc-state">${focus ? "current focus" : predicted ? "predicted" : "not observed"}</div></div>`;
+    }).join(`<span class="nv-kc-arrow">→</span>`);
+    const stageLegend = REPLAY_STAGE_META.filter(([key]) => key !== "BENIGN").map(([key, label, color]) => `<span class="nv-graph-legend-item"><i style="background:${color}"></i>${esc(label)}</span>`).join("");
+    return `<div class="nv-kc">${nodes}</div>
+      <div class="nv-legend"><span class="l-risk">predicted stage</span><span class="l-thr">current focus</span><span class="l-obs">not observed in this capture</span></div>
+      <div class="nv-graph-legend nv-kc-stage-legend"><b>Stage colors:</b>${stageLegend}</div>
+      <p class="nv-caveat"><b>What predicted progression means:</b> each colored stage is the model's best forecast of the host's future attack behavior for a window. Read the highlighted node as the current focus and the other marked nodes as stages observed or forecast somewhere in this capture. It is a warning signal, not confirmation that an attacker completed that technique.</p>
+      <p class="nv-caveat">Stages can repeat, regress or be skipped. Exfiltration does not occur in the training data, so it is never predicted here.</p>`;
   }
 
   function attackPage(content, d) {
@@ -283,21 +680,48 @@
       const lbl = o.t === focusAt ? "CURRENT FOCUS" : stageName(S);
       return `<span class="nv-badge ${kind}" title="${hhmmss(o.t)} · risk ${pct(o.risk)}">${esc(lbl)} · ${hhmmss(o.t).slice(0,5)}</span>`;
     }).join(" ");
+    const progressionGraph = temporalGraphScrollable(d, (d.observed || []).length - 1);
     content.innerHTML =
       plainBlock(d.plain_language) +
+      section("MITRE kill-chain map", "Predicted attack-stage progression", "Where the model's forecast places this host on the ATT&CK kill chain.",
+        killChainMap(d), "accent") +
       card("Legend", `<div style="display:flex;gap:8px;flex-wrap:wrap">
         <span class="nv-badge observed">observed · nominal</span>
         <span class="nv-badge elevated">elevated</span>
         <span class="nv-badge critical">over threshold</span>
         <span class="nv-badge forecast">current focus window</span></div>`) +
-      section("Predicted progression", "Predicted ATT&CK stage per observed window",
-        "Each window's predicted stage comes from the model's +120 s forecast of that window's future state.",
-        `<div style="line-height:2.1">${chips || '<span class="nv-muted">No windows.</span>'}</div>` +
+      section("Recorded progression", d.ground_truth ? "Recorded ATT&CK stage per observed window" : "Predicted ATT&CK stage per observed window",
+        d.ground_truth ? "This labelled replay shows the verified stage mapping; forecast risk remains model output." : "Each window's stage is the model's predicted future ATT&CK stage, not proof that the technique already occurred.",
+        progressionGraph +
+        `<div class="nv-progression-rail">${(d.progression || []).map((p) => `<div class="nv-progression-item"><b>${esc(stageName(p.stage))}</b><span>${hhmmss(p.start)}–${hhmmss(p.end)}</span><span>${pct(p.max_risk)}</span></div>`).join("")}</div>` +
         caveat("Stages can repeat, regress or be unmapped. These are predictions of a forecasted future state, not confirmed attacker actions, and network traffic alone does not prove host compromise.")) +
       section("K-step stage trajectory", "From the peak-risk window", "",
         `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Horizon</th><th>Predicted stage</th><th>ATT&CK tactic</th><th class="num">Forecast risk</th><th>Confidence</th></tr></thead>
         <tbody>${(d.forecast||[]).map((s) => `<tr><td>${esc(s.horizon)}</td><td>${stageBadge(s.stage)}</td><td>${esc(s.tactic || "—")}</td><td class="num">${pct(s.risk)}</td><td>${esc(s.confidence)}</td></tr>`).join("")}</tbody></table></div>`) +
-      card("", `<div class="nv-cta-row"><a class="nv-btn sec" href="/forecast">Back to Forecast</a><a class="nv-btn sec" href="/investigate">Why this forecast</a></div>`);
+      card("", `<div class="nv-cta-row"><a class="nv-btn sec" href="/forecast">Back to Forecast</a><a class="nv-btn sec" href="/investigate">Why this forecast</a></div>`) +
+      `<div id="nv-ds-attack"></div>`;
+    const graphDetail = content.querySelector("[data-graph-detail]");
+    content.querySelectorAll("[data-node-index]").forEach((node) => {
+      const index = Number(node.dataset.nodeIndex), item = (d.observed || [])[index];
+      const show = () => {
+        if (!graphDetail || !item) return;
+        const itemStage = d.ground_truth && item.observed_stage ? item.observed_stage : item.stage;
+        const prediction = (d.alert_events || []).find((event) => event.alert_at && Date.parse(event.alert_at) === Date.parse(item.t));
+        const predictionText = prediction ? `<strong class="nv-graph-prediction">PREDICTION RAISED · warning lead ${prediction.lead_time_s == null ? "n/a" : `${prediction.lead_time_s}s`}</strong>` : "";
+        graphDetail.innerHTML = `<b>${esc(hhmmss(item.t))}</b><span>${esc(stageName(itemStage))}</span><span>risk ${pct(item.risk)}</span><span>${d.ground_truth && item.observed_stage ? "recorded stage" : "model forecast"}</span>${predictionText}`;
+      };
+      node.addEventListener("mouseenter", show);
+      node.addEventListener("focus", show);
+    });
+    const lastNode = content.querySelector(".nv-graph-node.current");
+    if (lastNode && graphDetail) lastNode.dispatchEvent(new Event("focus"));
+    const progressionScroll = content.querySelector(".nv-graph-scroll");
+    if (progressionScroll) progressionScroll.scrollLeft = progressionScroll.scrollWidth;
+    if (d.ground_truth && d.scenario && d.scenario.campaign) {
+      api.get(decisionSupportUrl(d))
+        .then((ds) => { const el = document.getElementById("nv-ds-attack"); if (el) el.innerHTML = defenderPanel(ds); })
+        .catch(() => {});
+    }
   }
 
   async function investigatePage(content, sel) {
@@ -336,11 +760,38 @@
           <td><div class="nv-bar ${s.contribution>=0?"pos":"neg"}"><i style="width:${(Math.abs(s.contribution)/maxc*100).toFixed(0)}%"></i></div></td></tr>`).join("")}
         </tbody></table></div><p class="nv-note"><span style="color:#dc2626">red</span> pushes onset risk up, <span style="color:#0d9488">teal</span> pushes it down.</p>` +
         caveat("Attribution indicates model contribution, not causal proof.")) +
-      section("Temporal weight", "Attention over the 10-window history", "",
-        attnFlat ? `<div class="nv-empty">Attention weights are uniform for this window — the model did not concentrate on a specific history step here.</div>`
+      section("Temporal weight", "Top attention windows in the selected history", "Ranked highest-first; these are the model's ten available history inputs for this forecast.",
+        attnFlat ? `<div class="nv-empty">Attention unavailable for this window.</div>`
         : `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>History window</th><th style="width:60%">Attention weight</th></tr></thead><tbody>
         ${ex.attention.windows.map((w, i) => `<tr><td>${hhmmss(w)}</td><td><div class="nv-bar blue"><i style="width:${(ex.attention.weights[i]/maxa*100).toFixed(0)}%"></i></div></td></tr>`).join("")}
         </tbody></table></div>`);
+  }
+
+  function endpointGraph(g) {
+    const allEdges = (g.edges || []).slice().sort((a, b) => (b.flow_count || 0) - (a.flow_count || 0));
+    if (!allEdges.length) return `<div class="nv-empty">No endpoint relationships are available for this host.</div>`;
+    const edges = allEdges.slice(0, 80);
+    const sourceIds = [...new Set(edges.map((edge) => String(edge.source)))];
+    const targetIds = [...new Set(edges.map((edge) => String(edge.target)))];
+    const cols = Math.min(4, Math.max(1, Math.ceil(targetIds.length / 20)));
+    const rows = Math.ceil(targetIds.length / cols);
+    const W = Math.max(1080, 260 + cols * 230), H = Math.max(390, 100 + rows * 31);
+    const sourceX = 120, targetStartX = 330;
+    const sourceY = (id) => 70 + sourceIds.indexOf(id) * ((H - 120) / Math.max(sourceIds.length, 1));
+    const targetPos = new Map(targetIds.map((id, i) => [id, { x: targetStartX + (i % cols) * 230, y: 70 + Math.floor(i / cols) * 31 }]));
+    const maxFlows = Math.max(...edges.map((edge) => edge.flow_count || 1), 1);
+    const edgeLines = edges.map((edge) => {
+      const source = String(edge.source), target = String(edge.target), pos = targetPos.get(target);
+      const flows = edge.flow_count || 1;
+      return `<line x1="${sourceX + 58}" y1="${sourceY(source)}" x2="${pos.x - 58}" y2="${pos.y}" stroke="#94a3b8" stroke-width="${(1 + flows / maxFlows * 4).toFixed(1)}" opacity="0.42"><title>${esc(source)} → ${esc(target)} · ${num(flows)} flow${flows === 1 ? "" : "s"} · ${hhmmss(edge.first_seen)}–${hhmmss(edge.last_seen)}</title></line>`;
+    }).join("");
+    const sourceNodes = sourceIds.map((id) => `<g class="nv-endpoint-node source"><circle cx="${sourceX}" cy="${sourceY(id)}" r="13" fill="#0284c7" stroke="#0c4a6e" stroke-width="2"><title>Source host ${esc(id)}</title></circle><text x="${sourceX - 20}" y="${sourceY(id) + 29}" text-anchor="middle" font-size="11" fill="#0c4a6e" font-family="IBM Plex Mono">${esc(id)}</text></g>`).join("");
+    const targetNodes = targetIds.map((id) => { const pos = targetPos.get(id); return `<g class="nv-endpoint-node destination"><circle cx="${pos.x}" cy="${pos.y}" r="10" fill="#f97316" stroke="#9a3412" stroke-width="1.5"><title>Destination ${esc(id)}</title></circle><text x="${pos.x + 16}" y="${pos.y + 4}" font-size="10" fill="#475569" font-family="IBM Plex Mono">${esc(id)}</text></g>`; }).join("");
+    return `<div class="nv-endpoint-graph">
+      <div class="nv-endpoint-legend"><span><i class="source"></i>source host</span><span><i class="destination"></i>destination</span><span><i class="edge"></i>edge width = flow count</span></div>
+      <div class="nv-endpoint-scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Source to destination network graph"><text x="${sourceX}" y="28" text-anchor="middle" font-size="11" fill="#0c4a6e" font-family="IBM Plex Mono">SOURCE</text><text x="${targetStartX}" y="28" font-size="11" fill="#9a3412" font-family="IBM Plex Mono">DESTINATIONS</text>${edgeLines}${sourceNodes}${targetNodes}</svg></div>
+      <p class="nv-note">Showing the top ${num(edges.length)} relationships by flow count out of ${num(allEdges.length)} total edges. Hover a node or edge for endpoint and timing details.</p>
+    </div>`;
   }
 
   function networkPage(content, d) {
@@ -374,16 +825,29 @@
           ${delta(last.synCount, base.syn, "SYN")}
           ${delta(last.failedConns, base.failed, "failed conn")}
         </div>`) +
-      section("Communication & port activity", "Traffic and destination-port fan-out over time", "A spike in distinct destination ports is the signature of a scan.",
-        `<div class="nv-grid two">
-          ${card("Traffic volume (flows / 30 s)", spark(obs.map((o) => o.flows), "#0284c7", [hhmmss(obs[0]?.t), hhmmss(last.t)]))}
-          ${card("Destination-port fan-out", spark(obs.map((o) => o.distinctPorts), "#b45309", [hhmmss(obs[0]?.t), hhmmss(last.t)]))}
-          ${card("Port entropy", spark(obs.map((o) => o.portEntropy), "#0d9488"))}
-          ${card("Failed-connection ratio", spark(obs.map((o) => o.failedConns), "#dc2626"))}
+      card("How to read the network evidence", `<p class="nv-note" style="margin:0">Each point represents one 30-second observed window. The charts show traffic behaviour that supports the model forecast; they do not independently prove compromise. Look for sustained changes, compare the latest point with the baseline, then use Forecast and Investigate to see how those changes affected risk.</p>`) +
+      section("Communication & port activity", "Traffic and destination-port fan-out over time", "Each point is one 30-second observed window. Hover points for exact values; compare the latest point with the baseline above.",
+        `<div class="nv-network-charts">
+          ${card("Traffic volume (flows / 30 s)", `<p class="nv-chart-explain">How many flow records were observed in each 30-second window. Sudden bursts can indicate automation, scanning, or a large transfer.</p>${networkSpark(obs.map((o) => o.flows), "#0284c7", obs.map((o) => hhmmss(o.t)), "flows")}`)}
+          ${card("Destination-port fan-out", `<p class="nv-chart-explain">The number of distinct destination ports contacted. A rising fan-out is a common reconnaissance or port-scan signal.</p>${networkSpark(obs.map((o) => o.distinctPorts), "#b45309", obs.map((o) => hhmmss(o.t)), "ports")}`)}
+          ${card("Port entropy", `<p class="nv-chart-explain">How spread out the traffic is across destination ports. Higher entropy means activity is distributed across more ports rather than concentrated on one service.</p>${networkSpark(obs.map((o) => o.portEntropy), "#0d9488", obs.map((o) => hhmmss(o.t)))}`)}
+          ${card("Failed-connection ratio", `<p class="nv-chart-explain">The share of connection attempts that failed. A high or rising ratio can support scan, brute-force, or unreachable-service hypotheses.</p>${networkSpark(obs.map((o) => o.failedConns), "#dc2626", obs.map((o) => hhmmss(o.t)), "ratio")}`)}
         </div>`) +
       section("Raw telemetry", "Per-window features that drive the forecast", "",
         `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Window</th><th class="num">Flows</th><th class="num">Pkts/s</th><th class="num">SYN</th><th class="num">Dst ports</th><th class="num">Port entropy</th><th class="num">Unique dsts</th><th class="num">Failed</th><th class="num">Mean IAT</th></tr></thead>
         <tbody>${obs.slice().reverse().map((o) => `<tr><td>${hhmmss(o.t)}</td><td class="num">${num(o.flows)}</td><td class="num">${o.pktRate}</td><td class="num">${o.synCount}</td><td class="num">${o.distinctPorts}</td><td class="num">${o.portEntropy}</td><td class="num">${o.uniqueDsts}</td><td class="num">${o.failedConns}</td><td class="num">${o.iat}</td></tr>`).join("")}</tbody></table></div>`);
+    if (d.scenario && d.scenario.campaign) {
+      const graphQuery = d.upload_id
+        ? `/api/network-graph?campaign=upload&upload_id=${encodeURIComponent(d.upload_id)}&host=${encodeURIComponent(d.scenario.host || "")}`
+        : `/api/network-graph?campaign=${encodeURIComponent(d.scenario.campaign)}&host=${encodeURIComponent(d.scenario.host || "")}`;
+      api.get(graphQuery)
+        .then((g) => { const block = g.available
+          ? `<div class="nv-grid"><div><b>Nodes</b><div class="nv-big">${num(g.nodes.length)}</div></div><div><b>Edges</b><div class="nv-big">${num(g.edges.length)}</div></div></div>${endpointGraph(g)}
+             <details class="nv-edge-details"><summary>Show raw edge list</summary><div class="nv-tablewrap" style="margin-top:12px"><table class="nv"><thead><tr><th>Source</th><th>Destination</th><th class="num">Flows</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>${g.edges.slice(0, 100).map((edge) => `<tr><td class="nv-mono">${esc(edge.source)}</td><td class="nv-mono">${esc(edge.target)}</td><td class="num">${num(edge.flow_count)}</td><td>${hhmmss(edge.first_seen)}</td><td>${hhmmss(edge.last_seen)}</td></tr>`).join("")}</tbody></table></div>${g.edges.length > 100 ? `<p class="nv-note">Showing the first 100 of ${num(g.edges.length)} unique relationships.</p>` : ""}</details>`
+          : `<div class="nv-empty">Graph edges are unavailable because the loaded state cache does not retain source/destination identities. Phase 8 requires endpoint-aware telemetry.</div>`;
+          content.insertAdjacentHTML("beforeend", section("Phase 8 — temporal graph coverage", "Temporal endpoint graph", "Real source-to-destination relationships from the retained flow records.", block)); })
+        .catch((error) => { content.insertAdjacentHTML("beforeend", section("Phase 8 — temporal graph coverage", "Temporal endpoint graph", "The graph request failed before endpoint data could be displayed.", `<div class="nv-err">Graph unavailable: ${esc(error.message || "API request failed")}. Restart the backend and re-upload the capture so its flow endpoints are retained.</div>`)); });
+    }
   }
 
   async function homePage(content) {
@@ -457,9 +921,9 @@
         }
         const host = res.hosts[0];
         const fc = await api.get(`/api/upload/${res.upload_id}/forecast?host=${encodeURIComponent(host)}&mc=20`);
-        store.sel = { campaign: "upload", host, upload_id: res.upload_id, ground_truth: false };
+        store.sel = { campaign: "upload", host, upload_id: res.upload_id, ground_truth: Boolean(fc.ground_truth) };
         const rb = h(`<div id="nv-content"></div>`); resultEl.appendChild(rb);
-        forecastPage(rb, { ...fc, scenario: fc.scenario || { host, label: "Uploaded capture" } });
+        forecastPage(rb, { ...fc, upload_id: res.upload_id, scenario: fc.scenario || { host, label: "Uploaded capture" } });
         resultEl.insertBefore(h(`<p class="nv-note">This capture now drives <a href="/forecast">Forecast</a>, <a href="/network">Network</a>, <a href="/attack">ATT&CK</a> and <a href="/investigate">Investigate</a>.</p>`), rb);
       } catch (e) { stagesEl.innerHTML = `<p class="nv-err">Upload failed: ${esc(e.message)}</p>`; }
       finally { runEl.disabled = false; }
@@ -535,6 +999,8 @@
   async function modelPage(content) {
     setCtx({ scenario: "Architecture", host: "—", horizon: "+120s", mode: "Model card", data: "Checkpoint" });
     const m = await api.get("/api/model-card");
+    const telemetry = await api.get("/api/telemetry").catch(() => ({ sources: [] }));
+    const readiness = await api.get("/api/production-readiness").catch(() => ({ checks: [], ready_for_production: false }));
     const flow = `<div class="nv-flow" style="margin-bottom:6px">
       <div class="nv-step"><div class="hz">input</div><div class="st" style="font-size:12px">Network traffic</div><div class="meta">flows + packets</div></div>
       <span class="nv-arrow">→</span><div class="nv-step"><div class="hz">S_t</div><div class="st" style="font-size:12px">Network state</div><div class="meta">${m.input_features} features / window</div></div>
@@ -565,12 +1031,56 @@
           ${metric("Attention", `<small>${m.attention ? "enabled" : "off"}</small>`)}
           ${metric("Explainability", `<small>SHAP + attention</small>`)}
         </div>`) +
+      section("Phase 7 — telemetry readiness", "Which network evidence is connected?", "Missing telemetry is shown explicitly; unavailable sources are never fabricated.",
+        `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Source</th><th>Status</th><th>Identity</th><th>Timestamp</th><th class="num">Features</th></tr></thead><tbody>${(telemetry.sources||[]).map((s) => `<tr><td>${esc(s.name)}</td><td>${stageBadge(s.status === "active" ? "ACTIVE" : "NOT CONNECTED")}</td><td>${esc(s.identity)}</td><td>${s.timestamp ? "yes" : "no"}</td><td class="num">${num(s.features)}</td></tr>`).join("")}</tbody></table></div>`) +
+      section("Phases 8–10 — operational readiness", "Graph, decision support and promotion gates", "The release gate is intentionally conservative.",
+        `<div class="nv-grid two">${(readiness.checks||[]).map((c) => metric(c.name, `<small>${esc(c.status.toUpperCase())}</small>`, { sub: c.detail, cls: c.status === "pass" ? "ok" : c.status === "fail" ? "alert" : "" })).join("")}</div><p class="nv-caveat">${readiness.ready_for_production ? "Ready for controlled promotion." : "Not ready for production promotion: real long-horizon evidence or telemetry integrations are still missing."}</p>`) +
       `<details class="nv-acc" style="margin-top:16px"><summary>Packet-derived feature schema</summary><div class="body">
         ${(m.packet_features||[]).map((f) => `<span class="nv-chip">${esc(f)}</span>`).join("") || "n/a"}
         <p class="nv-note">Available when a PCAP is uploaded; CSV captures show these as unavailable rather than fabricated.</p></div></details>
       <details class="nv-acc"><summary>Training & reproducibility</summary><div class="body">${esc(m.training)}.<br>Training data: ${esc(m.training_data)}.</div></details>
       <details class="nv-acc"><summary>Model limitations</summary><div class="body">
         Only attacks with an observable ramp (scan, brute-force, botnet beaconing) can be forecast 30–120 s ahead; single-packet exploits cannot. Risk is an onset score, not a calibrated probability. Passive reconnaissance is not always observable, and network traffic alone does not prove host compromise.</div></details>`;
+  }
+
+  async function livePage(content) {
+    setCtx({ scenario: "Live server", host: "—", horizon: "+120s", mode: "Live", data: "Live feed" });
+    const telemetry = await api.get("/api/telemetry").catch(() => ({ sources: [] }));
+    async function tick() {
+      let d;
+      try { d = await api.get("/api/live"); } catch (e) { content.innerHTML = `<div class="nv-err">${esc(e.message)}</div>`; return; }
+      const age = d.age_seconds;
+      const fresh = age == null ? "unknown" : age < 60 ? `updated ${Math.round(age)} s ago` : age < 3600 ? `${Math.round(age / 60)} min ago` : `${(age / 3600).toFixed(1)} h ago`;
+      const stale = age != null && age > 120;
+      const telem = section("Telemetry readiness", "Connected evidence sources", "",
+        `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Source</th><th>Status</th><th>Identity</th><th>Timestamp</th></tr></thead>
+        <tbody>${(telemetry.sources || []).map((s) => `<tr><td>${esc(s.name)}</td><td>${stageBadge(s.status === "active" ? "ACTIVE" : "NOT CONNECTED")}</td><td>${esc(s.identity)}</td><td>${s.timestamp ? "yes" : "no"}</td></tr>`).join("")}</tbody></table></div>`) +
+        caveat("The live pipeline runs offline on the monitored host (CICFlowMeter → 30 s windows → world model). This page polls its output; it does not sniff traffic itself.");
+      if (!d.available) {
+        content.innerHTML = section("Live server monitoring", "No live feed connected", "",
+          `<div class="nv-empty">Start the live forecaster on the monitored host, then this page updates automatically:<br>
+            <code class="nv-mono">python scripts/live_forecast.py --flows &lt;flows_dir&gt; --interval 30</code><br><span class="nv-muted">${esc(d.note || "")}</span></div>`) + telem;
+        return;
+      }
+      const alertingN = d.hosts.filter((hh) => hh.alerting).length;
+      content.innerHTML =
+        card("", `<div class="nv-grid">
+          ${metric("Live hosts", num(d.n_hosts))}
+          ${metric("Alerting now", num(alertingN), { cls: alertingN ? "alert" : "" })}
+          ${metric("Alert threshold", d.threshold)}
+          ${metric("Feed freshness", `<small>${esc(fresh)}</small>`, { cls: stale ? "alert" : "ok" })}
+        </div>`) +
+        section("Live per-host forecasts", "Streaming from the monitored server",
+          "Sorted by peak forecast risk. Read-only — the API serves the offline live loop's output.",
+          `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Host</th><th>Last window</th><th class="num">+60s</th><th class="num">+90s</th><th class="num">+120s</th><th class="num">Peak</th><th>Stage</th><th>Action</th><th>Alert</th></tr></thead>
+          <tbody>${d.hosts.slice(0, 40).map((hh) => `<tr><td class="nv-mono">${esc(hh.host)}</td><td>${hhmmss(hh.last_window)}</td>
+            <td class="num">${pct(hh.risk["+60s"])}</td><td class="num">${pct(hh.risk["+90s"])}</td><td class="num">${pct(hh.risk["+120s"])}</td>
+            <td class="num">${pct(hh.peak_risk)}</td><td>${stageBadge(hh.stage)}</td><td>${esc((hh.action || {}).summary || "Monitor")}</td>
+            <td>${hh.alerting ? `<span class="nv-badge critical">${esc(hh.alert_level && hh.alert_level !== "none" ? hh.alert_level.toUpperCase() : "ALERTING")}</span>` : `<span class="nv-badge benign">clear</span>`}</td></tr>`).join("")}</tbody></table></div>`) +
+        telem;
+    }
+    await tick();
+    clearInterval(window.__nvLive); window.__nvLive = setInterval(tick, 4000);
   }
 
   /* ---------------- boot ---------------- */
@@ -588,6 +1098,7 @@
       if (route === "simulate") { shell("02 / Simulate", "Run a forecast simulation", "Select or upload traffic, build the network state, and run the forecast."); return void simulatePage(document.getElementById("nv-content")); }
       if (route === "validate") { shell("07 / Validate", "Does the forecast work?", "Benchmarks, per-horizon performance, early warning and generalization."); return void validatePage(document.getElementById("nv-content")); }
       if (route === "model") { shell("08 / Model", "How the forecasting system works", "Architecture, state representation and configuration, from the checkpoint."); return void modelPage(document.getElementById("nv-content")); }
+      if (route === "live") { shell("09 / Live", "Live server monitoring", "Real-time forecasts streamed from the monitored host."); return void livePage(document.getElementById("nv-content")); }
 
       const meta = {
         forecast: ["03 / Forecast", "What is likely to happen next?", "Current state → future states → risk and ATT&CK-stage trajectory."],
@@ -602,7 +1113,7 @@
       wirePicker();
       if (route === "forecast") forecastPage(content, sel.fc);
       else if (route === "attack") attackPage(content, sel.fc);
-      else if (route === "network") networkPage(content, sel.fc);
+      else if (route === "network") networkPage(content, { ...sel.fc, upload_id: sel.upload_id });
       else if (route === "investigate") await investigatePage(content, sel);
       else homePage(content);
     } catch (e) {

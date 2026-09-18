@@ -129,6 +129,10 @@ def normalise_attack_family(
         mapped = cleaned.map(
             lambda v: stage_mapping.ctu13_family(v) if v is not None else None
         )
+    elif dataset == "unsw_nb15":
+        mapped = cleaned.map(
+            lambda v: stage_mapping.unsw_nb15_family(v) if v is not None else None
+        )
     else:
         raise NotImplementedError(f"No label vocabulary for {dataset!r} yet")
 

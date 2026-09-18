@@ -30,6 +30,7 @@ class LossWeights:
     state: float = 1.0
     risk: float = 2.0
     stage: float = 1.0
+    attention: float = 0.0
 
 
 def gaussian_nll(mean: Tensor, logvar: Tensor, target: Tensor) -> Tensor:
@@ -70,6 +71,7 @@ class MultiTaskLoss(nn.Module):
         stage_enabled: bool = True,
         risk_loss: str = "bce",
         focal_gamma: float = 2.0,
+        attention_enabled: bool = False,
     ) -> None:
         super().__init__()
         self.w = weights or LossWeights()
@@ -80,6 +82,7 @@ class MultiTaskLoss(nn.Module):
             raise ValueError(f"risk_loss must be 'bce' or 'focal', got {risk_loss!r}")
         self.risk_loss = risk_loss
         self.focal_gamma = focal_gamma
+        self.attention_enabled = attention_enabled
         self.register_buffer(
             "pos_weight",
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,
@@ -137,6 +140,17 @@ class MultiTaskLoss(nn.Module):
                 parts["stage"] = float(l_stage.detach())
             else:
                 parts["stage"] = 0.0
+
+        # Optional temporal-focus supervision.  Targets are distributions over
+        # the history axis (B, K, L), normally centred on the precursor/ramp
+        # window.  This is deliberately a small regulariser: attention remains
+        # an explanation signal, never a causal label.
+        if self.attention_enabled and self.w.attention > 0 and "attn_weights" in predictions and "attention" in targets:
+            attn = predictions["attn_weights"].clamp_min(1e-8)
+            target = targets["attention"].to(device=device, dtype=attn.dtype)
+            l_attention = -(target * attn.log()).sum(dim=-1).mean()
+            total = total + self.w.attention * l_attention
+            parts["attention"] = float(l_attention.detach())
 
         parts["total"] = float(total.detach())
         return total, parts

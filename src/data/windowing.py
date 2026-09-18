@@ -128,6 +128,14 @@ class WindowConfig:
     history_policy: str = "strict"  # strict | masked (future targets always observed)
     min_observed_history: int = 3
 
+    def __post_init__(self) -> None:
+        """Derive future coverage from custom horizons without changing legacy defaults."""
+        max_horizon = max(self.horizons)
+        if self.rollout_steps == ROLLOUT_STEPS and max_horizon != ROLLOUT_STEPS:
+            object.__setattr__(self, "rollout_steps", max_horizon)
+        if self.min_windows_per_entity == MIN_WINDOWS_PER_ENTITY and max_horizon != ROLLOUT_STEPS:
+            object.__setattr__(self, "min_windows_per_entity", self.history_length + max_horizon)
+
 
 @dataclass(frozen=True)
 class SequenceBatch:
@@ -218,8 +226,10 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
 
     Returns:
         One row per ``(campaign_id, entity_id, window_start)`` with
-        :data:`STATE_INDEX_COLUMNS` + :data:`MODEL_COLUMNS` + window labels
-        (``binary_label``, ``attt_stage``).
+        :data:`STATE_INDEX_COLUMNS` + :data:`MODEL_COLUMNS` + window labels.
+        ``attack_onset`` marks a transition from an observed benign window to
+        an attack window; ``onset_left_censored`` marks an attack whose prior
+        benign state was not observed in this capture.
     """
     cfg = config or WindowConfig()
     df = flows.copy()
@@ -333,6 +343,7 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
 
     # Behavioural, history-dependent features (per host, in time order) + masks.
     windows = _add_behavioural_features(windows, cfg)
+    windows = _add_onset_labels(windows, cfg)
 
     # Finalise: fill non-finite, cast, order columns.
     for col in STATE_FEATURE_COLUMNS:
@@ -340,9 +351,39 @@ def build_windows(flows: pd.DataFrame, config: WindowConfig | None = None) -> pd
     windows[list(STATE_FEATURE_COLUMNS)] = (
         windows[list(STATE_FEATURE_COLUMNS)].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     )
-    ordered = list(STATE_INDEX_COLUMNS) + list(MODEL_COLUMNS) + ["binary_label", "attt_stage"]
+    ordered = list(STATE_INDEX_COLUMNS) + list(MODEL_COLUMNS) + [
+        "binary_label", "attt_stage", "attack_onset", "onset_left_censored"
+    ]
     windows = windows.sort_values(["campaign_id", "entity_id", "window_start"], kind="mergesort")
     return windows.loc[:, ordered].reset_index(drop=True)
+
+
+def _add_onset_labels(windows: pd.DataFrame, cfg: WindowConfig) -> pd.DataFrame:
+    """Add explicit onset and left-censoring labels without looking ahead.
+
+    An attack in the first observed window, or immediately after a clock gap,
+    is not a measurable onset: the capture may have started after compromise.
+    Those windows remain attacks for risk training but are marked as
+    left-censored for lead-time reporting.
+    """
+    out = windows.sort_values(
+        ["campaign_id", "entity_id", "window_start"], kind="mergesort"
+    ).copy()
+    group = out.groupby(["campaign_id", "entity_id"], sort=False)
+    previous_attack = group["binary_label"].shift(1).fillna(0)
+    previous_time = group["window_start"].shift(1)
+    consecutive = (
+        (out["window_start"] - previous_time)
+        == pd.to_timedelta(cfg.stride_seconds, unit="s")
+    ).fillna(False)
+    is_attack = out["binary_label"].astype(float) > 0.5
+    observed_benign_predecessor = (previous_attack <= 0.5) & consecutive
+    attack_transition = is_attack & (previous_attack <= 0.5)
+    out["attack_onset"] = (attack_transition & observed_benign_predecessor).astype("int8")
+    out["onset_left_censored"] = (
+        attack_transition & ~observed_benign_predecessor
+    ).astype("int8")
+    return out
 
 
 def _window_stage(stage_series: pd.Series) -> int:
@@ -479,7 +520,9 @@ def build_sequences(
             futures.append(fmat[t + 1:t + ksteps + 1])
             yr.append(y)
             ystg.append(stg)
-            meta_rows.append((entity, campaign, starts[t], float(risk[t]), int(stage[t])))
+            source_kind = str(grp["source_kind"].iloc[0]) if "source_kind" in grp else "real"
+            meta_rows.append((entity, campaign, starts[t], float(risk[t]), int(stage[t]),
+                              int(d) if np.isfinite(d) else -1, source_kind))
 
     if not xs:
         raise ValueError(
@@ -489,7 +532,8 @@ def build_sequences(
         )
 
     meta = pd.DataFrame(meta_rows, columns=["entity_id", "campaign_id", "window_start",
-                                          "origin_risk", "origin_stage"])
+                                          "origin_risk", "origin_stage",
+                                          "next_attack_distance", "source_kind"])
     return SequenceBatch(
         x=np.stack(xs), y_state=np.stack(ys), y_risk=np.stack(yr),
         y_stage=np.stack(ystg), meta=meta, feature_names=tuple(feat), future=np.stack(futures),
@@ -540,11 +584,15 @@ def _masked_history_sequences(windows: pd.DataFrame, cfg: WindowConfig,
                 stg = stage[t+np.array(cfg.horizons)]
             xs.append(history); futures.append(future)
             ys.append(future[np.array(cfg.horizons)-1]); risks.append(y); stages.append(stg)
-            metadata.append((entity,campaign,group.window_start.iloc[t],float(labels[t]),int(stage[t])))
+            source_kind = str(group["source_kind"].iloc[0]) if "source_kind" in group else "real"
+            metadata.append((entity,campaign,group.window_start.iloc[t],float(labels[t]),
+                             int(stage[t]), int(delay) if np.isfinite(delay) else -1, source_kind))
     if not xs:
         raise ValueError('No sequences with observed future targets')
     return SequenceBatch(np.stack(xs),np.stack(ys),np.stack(risks),np.stack(stages),
-                         pd.DataFrame(metadata,columns=['entity_id','campaign_id','window_start','origin_risk','origin_stage']),
+                         pd.DataFrame(metadata,columns=['entity_id','campaign_id','window_start',
+                                                        'origin_risk','origin_stage',
+                                                        'next_attack_distance','source_kind']),
                          feat,np.stack(futures))
 
 
@@ -652,10 +700,60 @@ class WindowedDataset:
         )
 
 
+def concatenate_sequence_batches(batches: Sequence[SequenceBatch], *, max_extra_fraction: float | None = None,
+                                seed: int = 1337) -> SequenceBatch:
+    """Concatenate compatible sequence batches with optional synthetic cap.
+
+    The first batch is treated as the real reference. When ``max_extra_fraction``
+    is set, at most that fraction of the resulting rows may come from batches
+    whose metadata ``source_kind`` is not ``real``.
+    """
+    if not batches:
+        raise ValueError("at least one sequence batch is required")
+    first = batches[0]
+    if any(b.feature_names != first.feature_names or b.x.shape[1:] != first.x.shape[1:]
+           for b in batches[1:]):
+        raise ValueError("sequence batches must have identical feature shapes")
+    rng = np.random.default_rng(seed)
+    real = [first]
+    synthetic = []
+    for batch in batches[1:]:
+        kind = batch.meta.get("source_kind", pd.Series("real", index=batch.meta.index))
+        (real if (kind == "real").all() else synthetic).append(batch)
+    selected = list(real)
+    if synthetic:
+        syn_x = np.concatenate([b.x for b in synthetic])
+        syn_state = np.concatenate([b.y_state for b in synthetic])
+        syn_risk = np.concatenate([b.y_risk for b in synthetic])
+        syn_stage = np.concatenate([b.y_stage for b in synthetic])
+        syn_meta = pd.concat([b.meta for b in synthetic], ignore_index=True)
+        syn_future = np.concatenate([b.future for b in synthetic]) if all(b.future is not None for b in synthetic) else None
+        if max_extra_fraction is not None:
+            if not 0 < max_extra_fraction <= 1:
+                raise ValueError("max_extra_fraction must be in (0, 1]")
+            real_count = sum(len(b.x) for b in real)
+            limit = int(real_count * max_extra_fraction / (1 - max_extra_fraction))
+            if len(syn_x) > limit:
+                indices = rng.choice(len(syn_x), size=max(1, limit), replace=False)
+                syn_x, syn_state, syn_risk, syn_stage = syn_x[indices], syn_state[indices], syn_risk[indices], syn_stage[indices]
+                syn_meta = syn_meta.iloc[indices].reset_index(drop=True)
+                if syn_future is not None:
+                    syn_future = syn_future[indices]
+        selected.append(SequenceBatch(syn_x, syn_state, syn_risk, syn_stage, syn_meta,
+                                      first.feature_names, syn_future))
+    x = np.concatenate([b.x for b in selected])
+    state = np.concatenate([b.y_state for b in selected])
+    risk = np.concatenate([b.y_risk for b in selected])
+    stage = np.concatenate([b.y_stage for b in selected])
+    meta = pd.concat([b.meta for b in selected], ignore_index=True)
+    future = np.concatenate([b.future for b in selected]) if all(b.future is not None for b in selected) else None
+    return SequenceBatch(x, state, risk, stage, meta, first.feature_names, future)
+
+
 __all__ = [
     "WINDOW_SECONDS", "STRIDE_SECONDS", "HISTORY_LENGTH", "HORIZONS", "ROLLOUT_STEPS",
     "MIN_WINDOWS_PER_ENTITY", "STATE_FEATURE_COLUMNS", "MASK_COLUMNS", "MODEL_COLUMNS",
     "STATE_INDEX_COLUMNS", "WindowConfig", "SequenceBatch", "entity_key", "build_windows",
     "build_sequences", "fit_scaler", "apply_scaler", "save_sequences", "load_sequences",
-    "train_val_test_slices", "WindowedDataset",
+    "train_val_test_slices", "WindowedDataset", "concatenate_sequence_batches",
 ]

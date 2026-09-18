@@ -288,10 +288,16 @@ CTU13_COLUMN_MAP: Final[Mapping[str, str]] = {
     # bwd_bytes is derived (TotBytes - SrcBytes) in the loader, already unified-named
 }
 
+# The UNSW loader converts the source fields into the canonical feature names.
+UNSW_NB15_COLUMN_MAP: Final[Mapping[str, str]] = {
+    column: column for column in UNIFIED_FLOW_COLUMNS
+}
+
 COLUMN_MAPS: Final[Mapping[str, Mapping[str, str]]] = {
     "cicids2017": CICIDS2017_COLUMN_MAP,
     "cicids2018": CICIDS2018_COLUMN_MAP,
     "ctu13": CTU13_COLUMN_MAP,
+    "unsw_nb15": UNSW_NB15_COLUMN_MAP,
 }
 
 
@@ -451,6 +457,7 @@ __all__ = [
     "CICIDS2017_COLUMN_MAP",
     "CICIDS2018_COLUMN_MAP",
     "CTU13_COLUMN_MAP",
+    "UNSW_NB15_COLUMN_MAP",
     "COLUMN_MAPS",
     "to_unified",
     "model_feature_columns",

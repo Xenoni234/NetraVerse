@@ -201,7 +201,7 @@ def convert_capture(source, destination, timeout=300):
         raise ValueError('Converter output lacks a valid header or flow records.')
 
 
-def ingest_upload(payload, suffix):
+def ingest_upload(payload, suffix, *, return_flows=False):
     if not payload:
         raise ValueError('The uploaded file is empty.')
     if len(payload) > 2 * 1024 * 1024 * 1024:
@@ -217,7 +217,7 @@ def ingest_upload(payload, suffix):
         header = [str(c).strip() for c in pd.read_csv(csv, nrows=0).columns]
         kind, mapping = _detect_map(header)
         available = {mapping[c] for c in header if c in mapping}
-        flows, cleaning = load_live_flows(csv, return_report=True)
+        flows, cleaning = load_live_flows(csv, return_report=True, preserve_labels=True)
         windows = build_windows(flows)
         if windows.empty:
             raise ValueError('No usable timestamped host windows were found.')
@@ -232,12 +232,13 @@ def ingest_upload(payload, suffix):
         cleaning['hosts'] = int(windows.entity_id.nunique())
         cleaning['hosts_with_history'] = int((catalog.forecasts > 0).sum())
         audit = {'column_map': kind, 'model_columns': len(MODEL_COLUMNS), 'finite': True,
+                 'ground_truth': bool(cleaning.get('ground_truth', False)),
                  'cleaning': cleaning,
                  'nonzero_columns': int(np.any(values != 0, axis=0).sum()),
                  'all_zero_columns': [c for c, populated in zip(MODEL_COLUMNS, np.any(values != 0, axis=0)) if not populated],
                  'missing_source_fields': sorted(set(FLOW_FEATURE_COLUMNS)-available),
                  'packet_source_mappings': {s: {'target': t, 'present': s in header} for s,t in PACKET_MAP.items()}}
-        return windows, audit
+        return (windows, audit, flows) if return_flows else (windows, audit)
 
 
 if __name__ == '__main__':

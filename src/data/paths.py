@@ -11,7 +11,7 @@ Layout assumed under ``DATA_ROOT`` (nothing here is committed; see .gitignore)::
       raw/
         cicids2017/    MachineLearningCSV/*.csv, PCAPs/*.pcap
         cicids2018/    *.csv
-        unsw_nb15/     UNSW-NB15_{1..4}.csv, NUSW-NB15_features.csv
+        UNSW-NB-15/unsw_nb15/  UNSW-NB15_{1..4}.csv, NUSW-NB15_features.csv
         ctu13/         scenario-*/  (*.binetflow, *.pcap)
       interim/         scratch, safe to delete
       processed/       unified parquet windows (the model's actual input)
@@ -84,7 +84,7 @@ RAW_SUBDIR: Final[Mapping[DatasetName, str]] = {
     "cicids2017": "CIC-IDS2017",
     "cicids2018": "CIC-IDS2018",
     "cic_iot2023": "CIC-IoT-2023",
-    "unsw_nb15": "unsw_nb15",
+    "unsw_nb15": "UNSW-NB-15/unsw_nb15",
     "ctu13": "CTU-13",
     "darpa_optc": "DARPA-OpTC",
     "lanl": "LANL",
@@ -96,7 +96,7 @@ RAW_FLOW_GLOB: Final[Mapping[DatasetName, str]] = {
     #                                        # MachineLearningCVE copy has neither -> unusable for forecasting
     "cicids2018": "csv_features/*.csv",
     "cic_iot2023": "Merged_CSV/*.csv",
-    "unsw_nb15": "UNSW-NB15_*.csv",
+    "unsw_nb15": "UNSW-NB15_[1-4].csv",
     "ctu13": "*.binetflow.parquet",
     "darpa_optc": "*.tar",
     "lanl": "*.txt.gz",

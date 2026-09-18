@@ -1,5 +1,7 @@
 # CLAUDE.md — SIH26153 Project Context
 
+> Consolidated decisions, gaps, dataset strategy and execution roadmap: [docs/project_context_and_roadmap.md](docs/project_context_and_roadmap.md). Keep that document updated whenever project assumptions or claims change.
+
 **This is the authoritative context file for this repository.** It is loaded at the start of
 every session. Where this file and any other document disagree, **this file wins** — update it
 first, then propagate.

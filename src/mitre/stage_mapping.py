@@ -112,6 +112,70 @@ STAGE_DESCRIPTIONS: Final[Mapping[int, str]] = {
     IMPACT: "Disrupting availability: denial-of-service / flooding.",
 }
 
+#: Advisory defender playbook per predicted stage. These are **human-approved
+#: recommendations only** — the system never executes a response. Each entry maps
+#: the forecasted stage to a short summary, concrete advisory actions, and the
+#: relevant MITRE ATT&CK mitigation ids. Consumed by ``/api/decision-support``.
+STAGE_DEFENCES: Final[Mapping[int, Mapping[str, object]]] = {
+    BENIGN: {
+        "summary": "No attack behaviour forecast. Continue monitoring.",
+        "actions": ["Maintain baseline monitoring.",
+                    "Collect corroborating DNS / authentication telemetry to widen coverage."],
+        "mitre_mitigations": [],
+    },
+    RECON: {
+        "summary": "Reconnaissance forecast: the host is scanning or being scanned.",
+        "actions": ["Rate-limit or deny the scanning source through an approved firewall change.",
+                    "Reduce the exposed attack surface: close or restrict the targeted ports/services.",
+                    "Increase logging on the targeted hosts and watch for follow-on access attempts."],
+        "mitre_mitigations": ["M1037 Filter Network Traffic", "M1030 Network Segmentation"],
+    },
+    INITIAL_ACCESS: {
+        "summary": "Initial-access forecast: credential brute force or exploitation of an exposed service.",
+        "actions": ["Enforce MFA and account lockout on the targeted service.",
+                    "Patch or take offline the exposed service pending review.",
+                    "Review authentication logs for the source and targeted accounts."],
+        "mitre_mitigations": ["M1032 Multi-factor Authentication", "M1051 Update Software", "M1036 Account Use Policies"],
+    },
+    LATERAL_MOVEMENT: {
+        "summary": "Lateral-movement forecast: spread from a compromised host to internal systems.",
+        "actions": ["Isolate the host only through an approved incident-response workflow.",
+                    "Tighten internal network segmentation between the host and its peers.",
+                    "Review privileged-account use and internal authentication for the host."],
+        "mitre_mitigations": ["M1030 Network Segmentation", "M1026 Privileged Account Management"],
+    },
+    C2: {
+        "summary": "Command-and-control forecast: a control channel to a compromised host.",
+        "actions": ["Block the beacon destination(s) and inspect egress from the host.",
+                    "Isolate the host via an approved workflow and preserve volatile evidence.",
+                    "Hunt for the same beacon pattern on other internal hosts."],
+        "mitre_mitigations": ["M1031 Network Intrusion Prevention", "M1037 Filter Network Traffic"],
+    },
+    EXFILTRATION: {
+        "summary": "Exfiltration forecast: data leaving the network.",
+        "actions": ["Throttle or block egress to the destination through an approved change.",
+                    "Trigger data-loss-prevention review of the transferred content.",
+                    "Isolate the source host and begin an exfiltration investigation."],
+        "mitre_mitigations": ["M1057 Data Loss Prevention", "M1037 Filter Network Traffic"],
+    },
+    IMPACT: {
+        "summary": "Impact forecast: denial-of-service / flooding against availability.",
+        "actions": ["Activate DDoS mitigation and request upstream / provider filtering.",
+                    "Rate-limit the offending sources and enable failover for the target service.",
+                    "Confirm the target's capacity and keep stakeholders informed."],
+        "mitre_mitigations": ["M1037 Filter Network Traffic", "M1030 Network Segmentation"],
+    },
+}
+
+
+def stage_defence(stage: int) -> Mapping[str, object]:
+    """Advisory defensive playbook for a predicted stage (falls back to BENIGN).
+
+    Recommendations are advisory only and require human approval; nothing is executed.
+    """
+    return STAGE_DEFENCES.get(int(stage), STAGE_DEFENCES[BENIGN])
+
+
 # --------------------------------------------------------------------------- #
 # Family -> stage. Keys are canonical families from labeller.normalise_attack_family.
 # --------------------------------------------------------------------------- #
@@ -173,6 +237,28 @@ def ctu13_family(raw_label: str, *, strict: bool = False) -> str:
     if strict:
         raise KeyError(f"Unmapped CTU-13 label {raw_label!r}")
     return "BENIGN"
+
+
+def unsw_nb15_family(raw_label: str, *, strict: bool = False) -> str:
+    """Map UNSW-NB15 ``attack_cat`` values to the project taxonomy."""
+    key = str(raw_label).strip()
+    mapping = {
+        "Normal": "BENIGN",
+        "Fuzzers": "Fuzzers",
+        "Analysis": "Analysis",
+        "Backdoors": "Backdoor",
+        "DoS": "DoS",
+        "Exploits": "Exploits",
+        "Generic": "Generic",
+        "Reconnaissance": "Reconnaissance",
+        "Shellcode": "Shellcode",
+        "Worms": "Worms",
+    }
+    if key in mapping:
+        return mapping[key]
+    if strict:
+        raise KeyError(f"Unmapped UNSW-NB15 attack_cat {raw_label!r}")
+    return "UNKNOWN"
 
 
 # --------------------------------------------------------------------------- #

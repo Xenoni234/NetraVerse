@@ -51,14 +51,15 @@ def metrics(y: np.ndarray, p: np.ndarray, cuts: np.ndarray) -> list[dict]:
 
 
 def warning_lead_times(meta: pd.DataFrame, risk: np.ndarray, cuts: np.ndarray,
-                       labels: pd.Series) -> dict:
+                       labels: pd.Series, horizons: np.ndarray | None = None) -> dict:
     """Lead to first attacked window start, measured from observed window CLOSE.
 
     Denominator is only events with an eligible continuous-history forecast.
     This does not claim coverage of attacks lacking observable benign history.
     """
+    horizon_values = np.asarray(horizons if horizons is not None else W.HORIZONS, dtype=int)
     delay = np.full(len(meta), np.inf)
-    for step in range(1, W.ROLLOUT_STEPS + 1):
+    for step in range(1, int(horizon_values.max()) + 1):
         idx = pd.MultiIndex.from_arrays([meta.campaign_id, meta.entity_id,
               meta.window_start + pd.to_timedelta(step * W.STRIDE_SECONDS, unit="s")])
         attack = labels.reindex(idx).fillna(0).to_numpy() > 0
@@ -68,7 +69,7 @@ def warning_lead_times(meta: pd.DataFrame, risk: np.ndarray, cuts: np.ndarray,
     rows["event_start"] = rows.window_start + pd.to_timedelta(delay[eligible] * W.STRIDE_SECONDS, unit="s")
     rows["lead_seconds"] = (delay[eligible] - 1) * W.STRIDE_SECONDS
     rows["alert"] = ((risk[eligible] >= cuts) &
-                     (np.asarray(W.HORIZONS)[None, :] >= delay[eligible, None])).any(axis=1)
+                     (horizon_values[None, :] >= delay[eligible, None])).any(axis=1)
     events = rows.groupby(["campaign_id", "entity_id", "event_start"])
     warned = rows[rows.alert].groupby(["campaign_id", "entity_id", "event_start"]).lead_seconds.max()
     return {"eligible_events": len(events), "alerted_events": len(warned),
@@ -103,7 +104,8 @@ def epoch(model: WorldModel, loader, criterion, optimizer, device: torch.device)
 @torch.no_grad()
 def dynamics(model: WorldModel, loader, device: torch.device) -> dict:
     model.eval()
-    err = np.zeros(len(W.HORIZONS))
+    horizon_count = int(model.config.horizons.__len__())
+    err = np.zeros(horizon_count)
     persistence = err.copy()
     count = 0
     for x, state, _, _, _ in loader:
