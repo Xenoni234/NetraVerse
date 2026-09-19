@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -29,6 +30,7 @@ if str(ROOT) not in sys.path:
 
 from src.data.windowing import apply_scaler
 from src.inference.engine import FEATURE_LABELS, load_forecaster, lead_time_seconds, explain_window
+from src.response.firewall import ActionStore, ActionValidationError
 from src.explain.shap_wrapper import RiskExplainer
 from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIONS, stage_defence
 from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
@@ -44,6 +46,10 @@ CKPT = Path(os.environ.get("NETRAVERSE_CHECKPOINT", _SIH_DEFAULT if _SIH_DEFAULT
 BENCH = ROOT / "models/wm_final/benchmark.json"
 GENERALIZATION = ROOT / "models/wm_final/generalization.json"
 LIVE_PRED = ROOT / "reports/live/predictions.parquet"  # written by scripts/live_forecast.py
+LIVE_STATE = Path(os.environ.get("NETRAVERSE_LIVE_STATE", ROOT / "reports/live/state.json"))
+LIVE_EVENTS = Path(os.environ.get("NETRAVERSE_LIVE_EVENTS", ROOT / "reports/live/events.jsonl"))
+LIVE_ACTIONS = Path(os.environ.get("NETRAVERSE_LIVE_ACTIONS", ROOT / "reports/live/actions.json"))
+LIVE_STALE_SECONDS = float(os.environ.get("NETRAVERSE_LIVE_STALE_SECONDS", "90"))
 
 # our stage id -> frontend stage label
 STAGE_UI = {0: "BENIGN", 1: "RECONNAISSANCE", 2: "INITIAL ACCESS", 3: "LATERAL MOVEMENT",
@@ -51,11 +57,19 @@ STAGE_UI = {0: "BENIGN", 1: "RECONNAISSANCE", 2: "INITIAL ACCESS", 3: "LATERAL M
 STAGE_UI_TO_ID = {v: k for k, v in STAGE_UI.items()}
 
 app = FastAPI(title="Network Attack Forecasting API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+allowed_origin = os.environ.get("NETRAVERSE_ALLOWED_ORIGIN")
+app.add_middleware(CORSMiddleware, allow_origins=[allowed_origin] if allowed_origin else ["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 
 _STATE = {"forecaster": None, "explainer": None, "baseline": None, "gallery": None,
           "gallery_path": None, "endpoint_frames": {}, "lock": threading.RLock()}
 _UPLOADS: dict[str, dict] = {}
+_LIVE_ACTIONS = ActionStore(
+    LIVE_ACTIONS,
+    dry_run=os.environ.get("NETRAVERSE_LIVE_DRY_RUN", "1") != "0",
+    management_ips={ip.strip() for ip in os.environ.get(
+        "NETRAVERSE_MANAGEMENT_IPS", "100.81.46.8,100.72.80.52").split(",") if ip.strip()},
+)
 
 
 def _forecaster():
@@ -363,14 +377,99 @@ def telemetry_status():
 
 @app.get("/api/live")
 def live_feed():
-    """Latest per-host live forecasts written by scripts/live_forecast.py.
+    """Latest live state, with a parquet fallback for older live sessions."""
+    state = _read_live_state()
+    if state is not None:
+        return state
+    return _read_legacy_live_predictions()
 
-    Read-only: the API just serves the parquet the offline live loop produces on the
-    monitored host. No model inference happens here and nothing is fabricated.
-    """
+
+def _read_json_file(path: Path) -> dict | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _live_age(issued: str | None) -> float | None:
+    if not issued:
+        return None
+    try:
+        return max(0.0, (pd.Timestamp.now(tz="UTC") - pd.Timestamp(issued)).total_seconds())
+    except (ValueError, TypeError):
+        return None
+
+
+def _host_payload(event: dict) -> dict:
+    stage_value = int(event.get("predicted_stage", event.get("stage", 0)) or 0)
+    risk = {str(k): round(float(v), 4) for k, v in (event.get("risk") or {}).items()}
+    return {
+        **event,
+        "host": str(event.get("host", "")),
+        "stage": STAGE_UI.get(stage_value, str(stage_value)),
+        "stage_id": stage_value,
+        "risk": risk,
+        "peak_risk": round(max(risk.values(), default=0.0), 4),
+        "alerting": event.get("forecast_state") in {"EARLY_WARNING", "CONFIRMED_ALERT"},
+        "response_state": str(event.get("response_state", "NONE")),
+        "action": dict(stage_defence(stage_value)),
+    }
+
+
+def _response_mode() -> str:
+    return "enforce" if _LIVE_ACTIONS.enforce_enabled and not _LIVE_ACTIONS.dry_run else "dry_run"
+
+
+def _read_live_state() -> dict | None:
+    state = _read_json_file(LIVE_STATE)
+    if not state or not isinstance(state.get("hosts"), list):
+        return None
+    timelines = state.get("timelines", {}) if isinstance(state.get("timelines", {}), dict) else {}
+    hosts = []
+    for raw in state.get("hosts", []):
+        if not isinstance(raw, dict):
+            continue
+        event = dict(raw)
+        event["timeline"] = timelines.get(str(event.get("host", "")), [])
+        hosts.append(_host_payload(event))
+    hosts.sort(key=lambda item: item["peak_risk"], reverse=True)
+    issued = str(state.get("updated_at", ""))
+    age = _live_age(issued)
+    stale = age is None or age > LIVE_STALE_SECONDS
+    for host in hosts:
+        if stale:
+            host["forecast_state"] = "STALE"
+            host["alerting"] = False
+    fc = _forecaster()
+    actions = _LIVE_ACTIONS.list()
+    for host in hosts:
+        active = [a for a in actions if a.get("host") == host.get("host") and a.get("status") in {"preview", "applied", "dry_run"}]
+        if active:
+            host["response_state"] = "ACTION_PENDING" if active[0].get("status") == "preview" else "ACTION_APPLIED"
+    return {
+        "available": bool(hosts) and not stale,
+        "stale": stale,
+        "state": "STALE" if stale else "LIVE",
+        "issued_at": issued,
+        "age_seconds": None if age is None else round(age, 1),
+        "threshold": round(float(fc.threshold), 4),
+        "n_hosts": len(hosts),
+        "hosts": hosts,
+        "horizons": [f"+{k * 30}s" for k in fc.horizons],
+        "checkpoint": str(state.get("checkpoint", CKPT)),
+        "calibration": state.get("calibration", "server threshold"),
+        "mode": _response_mode(),
+        "measurement_resolution_seconds": int(state.get("measurement_resolution_seconds", 30)),
+        "actions": actions,
+        "note": "Live forecasts from the monitored host; flow telemetry only.",
+    }
+
+
+def _read_legacy_live_predictions() -> dict:
     if not LIVE_PRED.exists():
         return {"available": False, "hosts": [],
-                "note": "No live feed found. Run scripts/live_forecast.py on the monitored host to stream forecasts."}
+                "note": "No live feed found. Run scripts/live_forecast.py on the monitored host."}
     try:
         df = pd.read_parquet(LIVE_PRED)
     except Exception as e:  # noqa: BLE001 - report, do not crash the UI
@@ -380,30 +479,124 @@ def live_feed():
     df = df.sort_values("issued_at")
     latest = df.groupby("host", as_index=False).tail(1)
     issued = str(df["issued_at"].max())
-    try:
-        age = max(0.0, (pd.Timestamp.now(tz="UTC") - pd.Timestamp(issued)).total_seconds())
-    except (ValueError, TypeError):
-        age = None
+    age = _live_age(issued)
     risk_cols = [c for c in df.columns if c.startswith("risk_k")]
     hosts = []
     for _, r in latest.iterrows():
         risks = {f"+{int(c[6:]) * 30}s": round(float(r[c]), 4) for c in risk_cols}
-        stage_value = int(r.get("stage", 0)) if str(r.get("stage", "")).lstrip("-").isdigit() else 0
-        hosts.append({
+        stage_value = int(r.get("stage", r.get("predicted_stage", 0))) if str(r.get("stage", r.get("predicted_stage", ""))).lstrip("-").isdigit() else 0
+        hosts.append(_host_payload({
             "host": str(r.get("host", "")), "issued_at": str(r.get("issued_at", "")),
             "last_window": str(r.get("last_window", "")), "risk": risks,
-            "peak_risk": round(max(risks.values(), default=0.0), 4),
-            "stage": STAGE_UI.get(stage_value, str(r.get("stage", ""))),
-            "action": dict(stage_defence(stage_value)),
-            "alerting": bool(r.get("alerting", False)), "alert_level": str(r.get("alert_level", "none")),
-        })
+            "predicted_stage": stage_value, "alerting": bool(r.get("alerting", False)),
+            "alert_level": str(r.get("alert_level", "none")),
+            "forecast_state": "CONFIRMED_ALERT" if bool(r.get("alerting", False)) else "NORMAL",
+        }))
     hosts.sort(key=lambda hh: hh["peak_risk"], reverse=True)
     fc = _forecaster()
-    return {"available": True, "issued_at": issued, "age_seconds": (None if age is None else round(age, 1)),
+    return {"available": bool(hosts) and (age is None or age <= LIVE_STALE_SECONDS),
+            "stale": age is not None and age > LIVE_STALE_SECONDS,
+            "issued_at": issued, "age_seconds": None if age is None else round(age, 1),
             "threshold": round(float(fc.threshold), 4), "n_hosts": len(hosts), "hosts": hosts,
-            "horizons": [f"+{k * 30}s" for k in fc.horizons],
-            "checkpoint": str(CKPT), "calibration": "loaded" if fc.calibrator else "server threshold",
-            "note": "Live per-host forecasts from scripts/live_forecast.py (offline, on the monitored host)."}
+            "horizons": [f"+{k * 30}s" for k in fc.horizons], "checkpoint": str(CKPT),
+            "calibration": "loaded" if fc.calibrator else "server threshold",
+            "mode": _response_mode(), "actions": _LIVE_ACTIONS.list(),
+            "note": "Legacy live predictions; restart live_forecast.py for full live state."}
+
+
+@app.get("/api/live/hosts/{host}")
+def live_host(host: str):
+    data = live_feed()
+    match = next((item for item in data.get("hosts", []) if item.get("host") == host), None)
+    if match is None:
+        raise HTTPException(404, "Unknown live host")
+    return {"available": data.get("available", False), "host": match, "actions": data.get("actions", [])}
+
+
+@app.get("/api/live/events")
+def live_events(limit: int = 100, host: str | None = None):
+    limit = max(1, min(int(limit), 500))
+    if not LIVE_EVENTS.exists():
+        return {"events": []}
+    events = []
+    try:
+        for line in LIVE_EVENTS.read_text(encoding="utf-8").splitlines()[-limit:]:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if host is None or str(event.get("host")) == host:
+                events.append(event)
+    except OSError:
+        return {"events": []}
+    return {"events": events[-limit:]}
+
+
+@app.get("/api/live/actions")
+def live_actions():
+    return {"actions": _LIVE_ACTIONS.list(), "mode": _response_mode()}
+
+
+@app.get("/api/live/health")
+def live_health():
+    feed = live_feed()
+    return {"feed": feed.get("state", "OFFLINE"), "available": feed.get("available", False),
+            "stale": feed.get("stale", True), "age_seconds": feed.get("age_seconds"),
+            "action_mode": _response_mode(),
+            "n_hosts": feed.get("n_hosts", 0), "checkpoint": str(CKPT)}
+
+
+def _operator(authorization: str | None, x_operator_token: str | None) -> str:
+    expected = os.environ.get("NETRAVERSE_OPERATOR_TOKEN")
+    if not expected:
+        raise HTTPException(503, "Live response control is not configured: set NETRAVERSE_OPERATOR_TOKEN")
+    token = x_operator_token or ""
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(401, "Invalid operator token")
+    return "operator"
+
+
+@app.post("/api/live/actions/preview")
+def live_action_preview(payload: dict, authorization: str | None = Header(default=None),
+                        x_operator_token: str | None = Header(default=None)):
+    operator = _operator(authorization, x_operator_token)
+    try:
+        return _LIVE_ACTIONS.preview(payload, operator=operator)
+    except ActionValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/live/actions/{preview_id}/approve")
+def live_action_approve(preview_id: str, authorization: str | None = Header(default=None),
+                        x_operator_token: str | None = Header(default=None)):
+    operator = _operator(authorization, x_operator_token)
+    feed = live_feed()
+    if not feed.get("available", False):
+        raise HTTPException(409, "Live feed is unavailable or stale; approval is disabled")
+    try:
+        return _LIVE_ACTIONS.approve(preview_id, operator=operator)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ActionValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/live/actions/{action_id}/rollback")
+def live_action_rollback(action_id: str, authorization: str | None = Header(default=None),
+                         x_operator_token: str | None = Header(default=None)):
+    operator = _operator(authorization, x_operator_token)
+    try:
+        return _LIVE_ACTIONS.rollback(action_id, operator=operator)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ActionValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 def _endpoint_columns(path: Path) -> tuple[str, str, str | None] | None:

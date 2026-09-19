@@ -10,7 +10,11 @@
  * sessionStorage (`nv_sel`) so the whole product follows one capture.
  */
 (() => {
-  const BASE = (window.NV_API_BASE || "http://localhost:8000").replace(/\/$/, "");
+  const queryApi = new URLSearchParams(window.location.search).get("api");
+  let storedApi = "";
+  try { storedApi = window.localStorage.getItem("nv_api_base") || ""; } catch {}
+  const defaultApi = window.location.hostname === "100.81.46.8" ? "http://100.72.80.52:8000" : "http://localhost:8000";
+  const BASE = (window.NV_API_BASE || queryApi || storedApi || defaultApi).replace(/\/$/, "");
   const route = document.body.dataset.route || "home";
   const store = {
     get sel() { try { return JSON.parse(sessionStorage.getItem("nv_sel") || "null"); } catch { return null; } },
@@ -20,6 +24,13 @@
   /* ---------------- helpers ---------------- */
   const api = {
     async get(p) { const r = await fetch(BASE + p); if (!r.ok) { const body = await r.json().catch(() => ({})); const detail = typeof body.detail === "string" ? body.detail : body.detail ? JSON.stringify(body.detail) : r.statusText; throw new Error(detail); } return r.json(); },
+    async post(p, body, token) {
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers["X-Operator-Token"] = token;
+      const r = await fetch(BASE + p, { method: "POST", headers, body: JSON.stringify(body) });
+      if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(data.detail || r.statusText); }
+      return r.json();
+    },
     async upload(file) { const fd = new FormData(); fd.append("file", file); const r = await fetch(BASE + "/api/upload", { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); },
   };
   const h = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -1083,6 +1094,77 @@
     clearInterval(window.__nvLive); window.__nvLive = setInterval(tick, 4000);
   }
 
+  // Operator live console.  The older livePage above is retained as a small
+  // compatibility fallback in history; this version adds the guarded response
+  // workflow without changing replay pages.
+  async function livePageV2(content) {
+    setCtx({ scenario: "Live server", host: "—", horizon: "+120s", mode: "Live", data: "Live feed" });
+    const telemetry = await api.get("/api/telemetry").catch(() => ({ sources: [] }));
+    const tokenKey = "nv_operator_token";
+    const getToken = () => { try { return window.NV_OPERATOR_TOKEN || sessionStorage.getItem(tokenKey) || ""; } catch { return window.NV_OPERATOR_TOKEN || ""; } };
+    const saveToken = (v) => { try { sessionStorage.setItem(tokenKey, v); } catch {} };
+    let selectedHost = null;
+    let latest = null;
+    const actionForStage = (stage) => {
+      const s = String(stage || "").toUpperCase();
+      if (s.includes("COMMAND") || s === "C2") return "block_destination_ip";
+      if (s.includes("LATERAL")) return "restrict_east_west";
+      if (s.includes("IMPACT")) return "rate_limit";
+      return "block_attack_port";
+    };
+    const actionOptions = (selected) => ["block_attack_port", "block_source_ip", "block_destination_ip", "rate_limit", "restrict_east_west", "isolate_host"].map((x) => `<option value="${x}" ${x === selected ? "selected" : ""}>${x}</option>`).join("");
+    const actionRows = (items) => !items?.length ? `<div class="nv-empty">No response actions recorded.</div>` : `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Status</th><th>Mode</th><th></th></tr></thead><tbody>${items.slice(0, 20).map((a) => `<tr><td class="nv-mono">${esc(hhmmss(a.created_at))}</td><td>${esc(a.action_type)}</td><td class="nv-mono">${esc(a.target_ip)}${a.target_port ? `:${esc(a.target_port)}` : ""}</td><td>${esc(a.status)}</td><td>${a.dry_run ? "dry-run" : "enforced"}</td><td>${a.rollback_available ? `<button class="nv-btn sec nv-rollback" data-action-id="${esc(a.action_id)}">Rollback</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+    const telemetryPanel = section("Telemetry readiness", "Connected evidence sources", "The live page polls the server-side capture and inference pipeline; it does not sniff traffic in the browser.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Source</th><th>Status</th><th>Identity</th><th>Timestamp</th></tr></thead><tbody>${(telemetry.sources || []).map((s) => `<tr><td>${esc(s.name)}</td><td>${stageBadge(s.status === "active" ? "ACTIVE" : "NOT CONNECTED")}</td><td>${esc(s.identity)}</td><td>${s.timestamp ? "yes" : "no"}</td></tr>`).join("")}</tbody></table></div>`);
+    async function tick() {
+      let data;
+      try { data = await api.get("/api/live"); } catch (e) { content.innerHTML = `<div class="nv-err">${esc(e.message)}</div>`; return; }
+      latest = data;
+      const events = await api.get("/api/live/events?limit=50").catch(() => ({ events: [] }));
+      const age = data.age_seconds;
+      const stale = Boolean(data.stale || (age != null && age > 90));
+      const fresh = age == null ? "unknown" : age < 60 ? `updated ${Math.round(age)} s ago` : `${Math.round(age / 60)} min ago`;
+      if (!data.available || !data.hosts?.length) {
+        content.innerHTML = card("", `<div class="nv-grid">${metric("Pipeline", `<small>${stale ? "STALE" : "OFFLINE"}</small>`, { cls: "alert" })}${metric("Response mode", `<small>${esc(data.mode || "dry_run")}</small>`)}</div>`) + section("Live server monitoring", "No live feed connected", "Start the forecaster on the monitored Linux server.", `<div class="nv-empty"><code class="nv-mono">python scripts/live_forecast.py --flows &lt;flows_dir&gt; --interval 5</code><br>${esc(data.note || "Waiting for a valid 10-window history.")}</div>`) + telemetryPanel;
+        return;
+      }
+      if (!selectedHost || !data.hosts.some((h0) => h0.host === selectedHost)) selectedHost = data.hosts[0].host;
+      const host = data.hosts.find((h0) => h0.host === selectedHost) || data.hosts[0];
+      const horizons = data.horizons || Object.keys(host.risk || {});
+      const alerting = data.hosts.filter((h0) => h0.alerting).length;
+      const stageAction = actionForStage(host.stage);
+      const hostRows = data.hosts.slice(0, 50).map((h0) => `<tr class="nv-live-host-row ${h0.host === host.host ? "selected" : ""}" data-live-host="${esc(h0.host)}"><td class="nv-mono">${esc(h0.host)}</td><td>${hhmmss(h0.last_window)}</td>${horizons.map((hz) => `<td class="num">${pct(h0.risk?.[hz])}</td>`).join("")}<td class="num">${pct(h0.peak_risk)}</td><td>${stageBadge(h0.stage)}</td><td>${h0.forecast_state === "CONFIRMED_ALERT" ? `<span class="nv-badge critical">CONFIRMED</span>` : h0.forecast_state === "EARLY_WARNING" ? `<span class="nv-badge elevated">EARLY WARNING</span>` : `<span class="nv-badge benign">NORMAL</span>`}</td></tr>`).join("");
+      const driverRows = (host.feature_drivers || []).map((f) => `<tr><td>${esc(f.label || f.feature)}</td><td class="nv-mono">${esc(f.feature)}</td><td class="num">${esc(f.observed)}</td><td class="num">${esc(f.robust_deviation)}</td></tr>`).join("");
+      const timelineRows = (host.timeline || []).map((r) => `<div class="nv-live-timeline-row"><span class="nv-mono">${esc(hhmmss(r.last_window || r.window_start))}</span>${horizons.map((hz) => { const k = Number(String(hz).replace("+", "").replace("s", "")) / 30; const value = Number(r[`risk_k${k}`] || 0); return `<span class="nv-live-risk-cell"><i style="width:${Math.max(2, Math.min(100, value * 100))}%"></i><b>${pct(value)}</b></span>`; }).join("")}</div>`).join("") || `<div class="nv-empty">Waiting for completed forecast windows.</div>`;
+      const hostEvents = (events.events || []).filter((e) => e.host === host.host).slice(-10).reverse().map((e) => `<tr><td class="nv-mono">${esc(hhmmss(e.issued_at))}</td><td>${esc(e.forecast_state)}</td><td>${esc((e.crossed_horizons || []).join(", ") || "none")}</td><td class="nv-mono">${esc(e.event_id)}</td></tr>`).join("") || `<tr><td colspan="4">No forecast events for this host.</td></tr>`;
+      content.innerHTML = card("", `<div class="nv-grid">${metric("Live hosts", num(data.n_hosts))}${metric("Alerting now", num(alerting), { cls: alerting ? "alert" : "" })}${metric("Feed freshness", `<small>${esc(fresh)}</small>`, { cls: stale ? "alert" : "ok" })}${metric("Pipeline", `<small>${esc(stale ? "STALE" : "LIVE")}</small>`, { cls: stale ? "alert" : "ok" })}${metric("Response mode", `<small>${esc(data.mode || "dry_run")}</small>`)}</div>`) +
+        section("Live per-host forecasts", "Streaming from the monitored server", "Click a host to inspect the forecast and response controls.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Host</th><th>Last window</th>${horizons.map((hz) => `<th class="num">${esc(hz)}</th>`).join("")}<th class="num">Peak</th><th>Stage</th><th>State</th></tr></thead><tbody>${hostRows}</tbody></table></div>`) +
+        section("Focused host", `${host.host} · ${host.forecast_state}`, "Forecast state is advisory; network traffic alone does not prove compromise.", `<div class="nv-grid">${horizons.map((hz) => metric(`${hz} risk`, pct(host.risk?.[hz]), { cls: (host.risk?.[hz] || 0) >= data.threshold ? "alert" : "" })).join("")}${metric("Confidence", host.confidence == null ? "n/a" : pct(host.confidence))}${metric("Resolution", `${data.measurement_resolution_seconds || 30}s`)}</div><p class="nv-note">${host.forecast_state === "EARLY_WARNING" ? "Early warning: review evidence before containment." : host.forecast_state === "CONFIRMED_ALERT" ? "Confirmed forecast state: a human decision is required before containment." : "No calibrated forecast threshold is currently crossed."}</p>`) +
+        section("Risk timeline", "Observed forecast history", "Each row is a completed 30-second observation window; bars show the model risk available at that origin.", `<div class="nv-live-timeline-head"><span>window</span>${horizons.map((hz) => `<span>${esc(hz)}</span>`).join("")}</div><div class="nv-live-timeline">${timelineRows}</div>`) +
+        section("Forecast evidence", "Top observed drivers", "Robust-scaled observations from the current window; these are evidence signals, not causal attributions.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Feature</th><th>Model field</th><th class="num">Observed</th><th class="num">Deviation</th></tr></thead><tbody>${driverRows || `<tr><td colspan="4">No driver data available.</td></tr>`}</tbody></table></div>`) +
+        section("Human-in-the-loop response", "Preview a defensive action", "Dry-run is the default. Preview shows the exact target, rule and TTL before approval.", `<div class="nv-live-action-form"><label>Operator token <input id="nv-op-token" type="password" placeholder="required for approval" value="${esc(getToken())}"></label><label>Action <select id="nv-action-type">${actionOptions(stageAction)}</select></label><label>Target IP <input id="nv-action-ip" value="${esc(host.host)}"></label><label>Port <input id="nv-action-port" type="number" min="1" max="65535" value="22"></label><label>TTL seconds <input id="nv-action-ttl" type="number" min="1" max="3600" value="300"></label><label>Mode <select id="nv-action-mode"><option value="dry_run">dry-run</option><option value="enforce">enforce if server allows</option></select></label><button class="nv-btn" id="nv-action-preview" ${stale ? "disabled" : ""}>Preview response</button>${stale ? `<span class="nv-caveat">Feed is stale; response controls are disabled.</span>` : ""}</div><div id="nv-action-preview-result"></div>`) +
+        section("Forecast event log", "State transitions", "Events written by the server-side live loop.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Time</th><th>State</th><th>Crossed horizons</th><th>Event</th></tr></thead><tbody>${hostEvents}</tbody></table></div>`) +
+        section("Response audit", "Approved actions", "Every action is operator-approved, TTL-bound and reversible.", actionRows(data.actions)) + telemetryPanel;
+      content.querySelectorAll("[data-live-host]").forEach((row) => row.addEventListener("click", () => { selectedHost = row.dataset.liveHost; tick(); }));
+      const tokenInput = content.querySelector("#nv-op-token");
+      if (tokenInput) tokenInput.addEventListener("change", () => saveToken(tokenInput.value));
+      const preview = content.querySelector("#nv-action-preview");
+      if (preview) preview.addEventListener("click", async () => {
+        const token = getToken() || window.prompt("Enter the live operator token:");
+        if (!token) return;
+        saveToken(token);
+        const result = content.querySelector("#nv-action-preview-result");
+        try {
+          const p = await api.post("/api/live/actions/preview", { alert_id: host.event_id || `live-${host.host}`, host: host.host, action_type: content.querySelector("#nv-action-type").value, target_ip: content.querySelector("#nv-action-ip").value, target_port: Number(content.querySelector("#nv-action-port").value || 22), ttl_seconds: Number(content.querySelector("#nv-action-ttl").value || 300), reason: `Human review of ${host.forecast_state} ${host.stage} forecast`, mode: content.querySelector("#nv-action-mode").value }, token);
+          result.innerHTML = card("Action preview", `<p><b>${esc(p.rule)}</b></p><p class="nv-note">${p.dry_run ? "Dry-run: no firewall change will be made." : "Enforcement is enabled on the server."} Expires ${esc(p.expires_at)}.</p><button class="nv-btn" id="nv-action-approve">Approve this action</button>`);
+          result.querySelector("#nv-action-approve").addEventListener("click", async () => { try { await api.post(`/api/live/actions/${encodeURIComponent(p.preview_id)}/approve`, {}, token); await tick(); } catch (e) { result.innerHTML += `<p class="nv-err">${esc(e.message)}</p>`; } });
+        } catch (e) { result.innerHTML = `<p class="nv-err">${esc(e.message)}</p>`; }
+      });
+      content.querySelectorAll(".nv-rollback").forEach((button) => button.addEventListener("click", async () => { const token = getToken() || window.prompt("Enter the live operator token:"); if (!token) return; try { await api.post(`/api/live/actions/${encodeURIComponent(button.dataset.actionId)}/rollback`, {}, token); await tick(); } catch (e) { window.alert(e.message); } }));
+    }
+    await tick();
+    clearInterval(window.__nvLive); window.__nvLive = setInterval(tick, 5000);
+  }
+
   /* ---------------- boot ---------------- */
   async function boot() {
     try { await api.get("/api/health"); setSide(true); }
@@ -1098,7 +1180,7 @@
       if (route === "simulate") { shell("02 / Simulate", "Run a forecast simulation", "Select or upload traffic, build the network state, and run the forecast."); return void simulatePage(document.getElementById("nv-content")); }
       if (route === "validate") { shell("07 / Validate", "Does the forecast work?", "Benchmarks, per-horizon performance, early warning and generalization."); return void validatePage(document.getElementById("nv-content")); }
       if (route === "model") { shell("08 / Model", "How the forecasting system works", "Architecture, state representation and configuration, from the checkpoint."); return void modelPage(document.getElementById("nv-content")); }
-      if (route === "live") { shell("09 / Live", "Live server monitoring", "Real-time forecasts streamed from the monitored host."); return void livePage(document.getElementById("nv-content")); }
+      if (route === "live") { shell("09 / Live", "Live server monitoring", "Real-time forecasts streamed from the monitored host."); return void livePageV2(document.getElementById("nv-content")); }
 
       const meta = {
         forecast: ["03 / Forecast", "What is likely to happen next?", "Current state → future states → risk and ATT&CK-stage trajectory."],
