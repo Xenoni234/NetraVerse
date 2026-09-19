@@ -32,6 +32,7 @@ if str(ROOT) not in sys.path:
 
 from src.data.windowing import apply_scaler
 from src.inference.engine import FEATURE_LABELS, load_forecaster, lead_time_seconds, explain_window
+from src.inference.live_state import recommended_action
 from src.response.firewall import ActionStore, ActionValidationError
 from src.explain.shap_wrapper import RiskExplainer
 from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIONS, stage_defence
@@ -417,6 +418,7 @@ def _live_age(issued: str | None) -> float | None:
 
 def _host_payload(event: dict) -> dict:
     stage_value = int(event.get("predicted_stage", event.get("stage", 0)) or 0)
+    forecast_state = str(event.get("forecast_state", "NORMAL"))
     risk = {str(k): round(float(v), 4) for k, v in (event.get("risk") or {}).items()}
     return {
         **event,
@@ -425,9 +427,12 @@ def _host_payload(event: dict) -> dict:
         "stage_id": stage_value,
         "risk": risk,
         "peak_risk": round(max(risk.values(), default=0.0), 4),
-        "alerting": event.get("forecast_state") in {"EARLY_WARNING", "CONFIRMED_ALERT"},
+        "alerting": forecast_state in {"EARLY_WARNING", "CONFIRMED_ALERT"},
         "response_state": str(event.get("response_state", "NONE")),
         "action": dict(stage_defence(stage_value)),
+        "recommended_action": dict(event.get("recommended_action") or recommended_action(
+            stage=stage_value, state=forecast_state, host=str(event.get("host", ""))
+        )),
     }
 
 
@@ -455,6 +460,9 @@ def _read_live_state() -> dict | None:
         if stale:
             host["forecast_state"] = "STALE"
             host["alerting"] = False
+            host["recommended_action"] = recommended_action(
+                stage=int(host.get("stage_id", 0)), state="STALE", host=str(host.get("host", ""))
+            )
     fc = _forecaster()
     actions = _LIVE_ACTIONS.list()
     for host in hosts:

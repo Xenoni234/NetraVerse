@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.inference.live_state import classify_alert, make_live_event
+from src.inference.live_state import classify_alert, make_live_event, recommended_action
 from src.response.firewall import ActionStore, ActionValidationError
 
 
@@ -37,6 +37,26 @@ def test_live_event_contains_risk_uncertainty_and_resolution():
     assert event["uncertainty"]["+120s"]["low"] == .8
     assert event["measurement_resolution_seconds"] == 30
     assert event["event_id"].startswith("alert-")
+
+
+def test_live_event_contains_current_human_approved_recommendation():
+    event = make_live_event(
+        {"risk_k1": 0.8, "risk_k2": 0.8, "risk_k4": 0.9, "stage": 4},
+        host="192.0.2.10", horizons=[1, 2, 4],
+        thresholds={1: .7, 2: .7, 4: .7},
+    )
+    recommendation = event["recommended_action"]
+    assert recommendation["action_type"] == "block_destination_ip"
+    assert recommendation["target_ip"] == "192.0.2.10"
+    assert recommendation["requires_human_approval"] is True
+    assert recommendation["recommendation_only"] is True
+
+
+def test_normal_or_stale_live_event_recommends_monitoring_only():
+    recommendation = recommended_action(stage=4, state="NORMAL", host="192.0.2.10")
+    assert recommendation["action_type"] is None
+    assert recommendation["label"] == "Monitor only"
+    assert recommendation["requires_human_approval"] is False
 
 
 def _payload(action_type="block_attack_port", **extra):
