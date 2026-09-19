@@ -186,6 +186,7 @@ def main(argv=None) -> int:
                     previous[host] = row
                     last_event_state[host] = event["forecast_state"]
                 last_state = current_state
+                now = datetime.now(timezone.utc).isoformat()
                 _atomic_json(state_path, {
                     "available": True, "updated_at": now, "hosts": list(last_state.values()),
                     "timelines": timeline_by_host,
