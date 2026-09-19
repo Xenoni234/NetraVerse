@@ -82,6 +82,11 @@ def main(argv=None) -> int:
     # save a server-calibrated checkpoint: same weights/scaler, new threshold
     payload = torch.load(Path(args.checkpoint), map_location="cpu", weights_only=False)
     payload["threshold"] = thr
+    # Newer checkpoints may carry one validation threshold per horizon.  The
+    # server calibration must override those too; otherwise live inference
+    # would continue using the lab thresholds despite the calibrated scalar.
+    if payload.get("thresholds") is not None:
+        payload["thresholds"] = [thr] * len(payload["thresholds"])
     payload["calibrated_on"] = str(args.flows)
     payload["benign_risk_p99"] = float(np.percentile(risk, 99))
     out = Path(args.out)
