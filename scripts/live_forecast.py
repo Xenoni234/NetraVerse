@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from datetime import datetime, timezone
+from numbers import Real
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,9 +37,19 @@ from src.inference.live_state import make_live_event
 
 
 def _atomic_json(path: Path, payload: object) -> None:
+    def safe(value):
+        if isinstance(value, dict):
+            return {str(k): safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [safe(v) for v in value]
+        if isinstance(value, Real) and not isinstance(value, bool):
+            number = float(value)
+            return number if math.isfinite(number) else None
+        return value
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    tmp.write_text(json.dumps(safe(payload), indent=2, default=str, allow_nan=False), encoding="utf-8")
     tmp.replace(path)
 
 

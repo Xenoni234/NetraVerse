@@ -10,11 +10,13 @@ Run:  uvicorn api.server:app --port 8000       (from the repo root, in the venv)
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import threading
 import time
 import uuid
+from numbers import Real
 from pathlib import Path
 
 import numpy as np
@@ -380,8 +382,20 @@ def live_feed():
     """Latest live state, with a parquet fallback for older live sessions."""
     state = _read_live_state()
     if state is not None:
-        return state
-    return _read_legacy_live_predictions()
+        return _json_safe(state)
+    return _json_safe(_read_legacy_live_predictions())
+
+
+def _json_safe(value):
+    """Convert NaN/Infinity values to JSON null before FastAPI serializes them."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Real) and not isinstance(value, bool):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    return value
 
 
 def _read_json_file(path: Path) -> dict | None:
