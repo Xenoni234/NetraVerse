@@ -54,7 +54,36 @@ CICFLOWMETER_PY_COLUMN_MAP = {
     "idle_mean": "idle_mean",
 }
 
+# Java CICFlowMeter 4.x emits a different spelling from both CIC-IDS2017 and
+# the Python package.  In particular it uses ``Src IP`` (not ``Source IP``)
+# and singular packet-counter names.  Keep this map explicit so live captures
+# retain per-host identity and the packet-derived features used by the model.
+CICFLOWMETER_JAVA_COLUMN_MAP = {
+    "Flow ID": "flow_id", "Src IP": "src_ip", "Src Port": "src_port",
+    "Dst IP": "dst_ip", "Dst Port": "dst_port", "Protocol": "protocol",
+    "Timestamp": "timestamp",
+    "Flow Duration": "flow_duration",
+    "Total Fwd Packet": "fwd_packets", "Total Bwd packets": "bwd_packets",
+    "Total Length of Fwd Packet": "fwd_bytes",
+    "Total Length of Bwd Packet": "bwd_bytes",
+    "Fwd Packet Length Mean": "fwd_pkt_len_mean",
+    "Bwd Packet Length Mean": "bwd_pkt_len_mean",
+    "Flow Bytes/s": "bytes_per_second", "Flow Packets/s": "packets_per_second",
+    "Flow IAT Mean": "iat_mean", "Flow IAT Std": "iat_std",
+    "Flow IAT Max": "iat_max",
+    "Fwd IAT Mean": "fwd_iat_mean", "Bwd IAT Mean": "bwd_iat_mean",
+    "SYN Flag Count": "syn_count", "ACK Flag Count": "ack_count",
+    "FIN Flag Count": "fin_count", "RST Flag Count": "rst_count",
+    "PSH Flag Count": "psh_count", "URG Flag Count": "urg_count",
+    "Packet Length Mean": "pkt_len_mean", "Packet Length Std": "pkt_len_std",
+    "Packet Length Variance": "pkt_len_var",
+    "FWD Init Win Bytes": "init_win_fwd", "Bwd Init Win Bytes": "init_win_bwd",
+    "Down/Up Ratio": "fwd_bwd_ratio",
+    "Active Mean": "active_mean", "Idle Mean": "idle_mean",
+}
+
 _CANDIDATE_MAPS = {
+    "cicflowmeter_java": CICFLOWMETER_JAVA_COLUMN_MAP,
     "cicids2017": CICIDS2017_COLUMN_MAP,
     "cicids2018": CICIDS2018_COLUMN_MAP,
     "cicflowmeter_py": CICFLOWMETER_PY_COLUMN_MAP,
