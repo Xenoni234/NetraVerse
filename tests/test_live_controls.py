@@ -112,6 +112,15 @@ def test_behavioral_recommendation_explains_fallback_source():
     assert "behaviorally inferred" in event["recommended_action"]["rationale"]
 
 
+def test_exfiltration_recommends_destination_block():
+    recommendation = recommended_action(
+        stage=5, state="CONFIRMED_ALERT", host="192.0.2.10"
+    )
+    assert recommendation["action_type"] == "block_destination_ip"
+    assert recommendation["target_port"] is None
+    assert recommendation["requires_human_approval"] is True
+
+
 def _payload(action_type="block_attack_port", **extra):
     return {
         "alert_id": "alert-12345678", "host": "100.81.46.8",

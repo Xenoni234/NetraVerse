@@ -173,6 +173,7 @@ def recommended_action(
     action_type = {
         4: "block_destination_ip",  # C2
         3: "restrict_east_west",    # lateral movement
+        5: "block_destination_ip",  # exfiltration egress
         6: "rate_limit",            # impact
     }.get(stage, "block_attack_port")
     needs_port = action_type in {"block_attack_port", "rate_limit"}
