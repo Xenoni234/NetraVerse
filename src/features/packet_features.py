@@ -92,7 +92,7 @@ def extract_pcap_features(
         pcap_path: Capture file to read.
         window_seconds: Window span; must match the flow pipeline.
         stride_seconds: Window stride; must match the flow pipeline.
-        entity_granularity: ``src_ip`` or ``src_dst_pair``.
+        entity_granularity: ``src_ip``, ``dst_ip`` or ``src_dst_pair``.
         cache_dir: If given, memoise the TShark export here.
 
     Returns:

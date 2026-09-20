@@ -212,10 +212,12 @@ def load_live_flows(
     return (out, report) if return_report else out
 
 
-def live_windows(path: Path | str, *, campaign_id: str = "live") -> pd.DataFrame:
+def live_windows(
+    path: Path | str, *, campaign_id: str = "live", entity_granularity: str = "src_ip"
+) -> pd.DataFrame:
     """Convenience: live flows -> per-host 30 s state windows (ready to forecast)."""
     flows = load_live_flows(path, campaign_id=campaign_id)
-    return W.build_windows(flows)
+    return W.build_windows(flows, W.WindowConfig(entity_granularity=entity_granularity))
 
 
 __all__ = ["load_live_flows", "live_windows"]

@@ -2,6 +2,7 @@
 
 import json
 
+import pandas as pd
 import pytest
 
 from src.inference.live_state import (
@@ -10,7 +11,31 @@ from src.inference.live_state import (
     make_live_event,
     recommended_action,
 )
-from src.response.firewall import ActionStore, ActionValidationError
+from src.response.firewall import ActionStore, ActionValidationError, NftablesExecutor
+from src.data.windowing import entity_key
+
+
+def test_destination_entity_key_tracks_inbound_target_host():
+    flows = pd.DataFrame({
+        "src_ip": ["100.81.46.8", "100.81.46.8"],
+        "dst_ip": ["100.72.80.52", "100.72.80.52"],
+    })
+    assert entity_key(flows, "dst_ip").tolist() == ["100.72.80.52", "100.72.80.52"]
+
+
+def test_inbound_port_rule_targets_destination_address():
+    executor = NftablesExecutor()
+    calls = []
+    executor._run = lambda args: calls.append(args) or ""
+    executor.apply({
+        "action_id": "abcdef1234567890",
+        "action_type": "block_attack_port",
+        "target_ip": "100.72.80.52",
+        "target_port": 22,
+    })
+    rule = calls[-1]
+    assert rule[5:7] == ["ip", "daddr"]
+    assert rule[-2:] == ["counter", "drop"]
 
 
 def test_two_tier_alert_state_uses_single_and_corroborated_crossings():

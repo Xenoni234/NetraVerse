@@ -63,7 +63,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--pos-weight-cap", type=float, default=30.0)
     ap.add_argument("--risk-loss", choices=["bce", "focal"], default="bce")
     ap.add_argument("--focal-gamma", type=float, default=2.0)
-    ap.add_argument("--entity-granularity", choices=["src_ip", "src_dst_pair"], default="src_ip")
+    ap.add_argument("--entity-granularity", choices=["src_ip", "dst_ip", "src_dst_pair"], default="src_ip",
+                    help="entity identity for windowing; use dst_ip for inbound-target forecasting")
     ap.add_argument("--add-2018", action="store_true",
                     help="also train on the CIC-IDS2018 IP-bearing day (Tue-20-02, DDoS)")
     ap.add_argument("--max-rows-2018", type=int, default=2_000_000,
@@ -129,7 +130,8 @@ def build_dataset(days, max_rows, *, add_2018=False, max_rows_2018=2_000_000, us
     """Load -> unify -> label -> per-entity windows. 2017 (all/selected days),
     optionally + the CIC-IDS2018 IP-bearing day (the only 2018 day with Source IP).
 
-    ``granularity`` = ``src_ip`` (per host) or ``src_dst_pair`` (per host-pair;
+    ``granularity`` = ``src_ip`` (per source host), ``dst_ip`` (per destination
+    host), or ``src_dst_pair`` (per host-pair;
     many more benign->attack transitions, but fan-out features degenerate).
     Windows cached to data/processed/ so iteration skips the slow (~3 min) rebuild.
     """

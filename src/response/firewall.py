@@ -114,7 +114,9 @@ class NftablesExecutor:
         ])
 
         family_flag = "ip6" if ":" in target_ip else "ip"
-        direction = "daddr" if action_type == "block_destination_ip" else "saddr"
+        # Port controls target the monitored destination host on inbound traffic;
+        # source/destination-IP controls retain their original directions.
+        direction = "daddr" if action_type in {"block_destination_ip", "block_attack_port", "rate_limit"} else "saddr"
         rule = ["add", "rule", "inet", table, chain, family_flag, direction, target_ip]
         if action_type in {"block_attack_port", "rate_limit"}:
             rule.extend(["tcp", "dport", str(port)])

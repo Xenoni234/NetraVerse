@@ -80,9 +80,12 @@ def _feature_drivers(fc, host_windows: pd.DataFrame, *, top_k: int = 5) -> list[
     ]
 
 
-def forecast_once(fc, flows_path: str, horizon: int, sustain: int, *, mc_samples: int = 0) -> pd.DataFrame:
+def forecast_once(
+    fc, flows_path: str, horizon: int, sustain: int, *, mc_samples: int = 0,
+    entity_granularity: str = "dst_ip",
+) -> pd.DataFrame:
     """One pass: build windows from current flows, forecast latest risk per host."""
-    win = live_windows(flows_path, campaign_id="live")
+    win = live_windows(flows_path, campaign_id="live", entity_granularity=entity_granularity)
     now = datetime.now(timezone.utc).isoformat()
     rows = []
     for (_, ent), hw in win.groupby(["campaign_id", "entity_id"], sort=False):
@@ -144,6 +147,9 @@ def main(argv=None) -> int:
     ap.add_argument("--sustain", type=int, default=2)
     ap.add_argument("--mc-samples", type=int, default=8,
                     help="MC-dropout samples for uncertainty; use 0 to disable")
+    ap.add_argument("--entity-granularity", choices=("src_ip", "dst_ip", "src_dst_pair"),
+                    default="dst_ip",
+                    help="live host identity; dst_ip is correct for inbound attacks")
     ap.add_argument("--once", action="store_true", help="run a single pass and exit")
     args = ap.parse_args(argv)
 
@@ -155,7 +161,8 @@ def main(argv=None) -> int:
         args.horizon = max(fc.horizons)
         print(f"[live] requested +{requested * 30}s is unavailable in checkpoint; using +{args.horizon * 30}s")
     print(f"[live] checkpoint={ckpt} | threshold={fc.threshold:.4f} | horizon=+{args.horizon*30}s")
-    print(f"[live] watching {args.flows} every {args.interval}s (Ctrl-C to stop)")
+    print(f"[live] watching {args.flows} every {args.interval}s "
+          f"(entity={args.entity_granularity}; Ctrl-C to stop)")
 
     out = Path(args.predictions); out.parent.mkdir(parents=True, exist_ok=True)
     history = []
@@ -168,8 +175,11 @@ def main(argv=None) -> int:
     try:
         while True:
             try:
-                preds = forecast_once(fc, args.flows, args.horizon, args.sustain,
-                                      mc_samples=max(0, args.mc_samples))
+                preds = forecast_once(
+                    fc, args.flows, args.horizon, args.sustain,
+                    mc_samples=max(0, args.mc_samples),
+                    entity_granularity=args.entity_granularity,
+                )
             except FileNotFoundError:
                 print("[live] no flows yet, waiting…")
                 preds = pd.DataFrame()
@@ -193,7 +203,10 @@ def main(argv=None) -> int:
                 threshold_map = {int(k): fc.threshold_for_horizon(k) for k in fc.horizons}
                 current_state = {}
                 new_events = []
-                live_win = live_windows(args.flows, campaign_id="live")
+                live_win = live_windows(
+                    args.flows, campaign_id="live",
+                    entity_granularity=args.entity_granularity,
+                )
                 for row in preds.to_dict("records"):
                     host = str(row["host"])
                     host_hw = live_win.loc[live_win.entity_id.astype(str) == host]

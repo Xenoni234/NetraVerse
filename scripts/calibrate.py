@@ -44,6 +44,9 @@ def main(argv=None) -> int:
                          "benign noise (e.g. 2.0). With a small benign sample the p99 sits at "
                          "the benign max and grazes it; a margin gives clean separation.")
     ap.add_argument("--horizon", type=int, default=4, help="horizon (windows) to calibrate on")
+    ap.add_argument("--entity-granularity", choices=("src_ip", "dst_ip", "src_dst_pair"),
+                    default="dst_ip",
+                    help="host identity used for calibration; dst_ip is correct for inbound attacks")
     args = ap.parse_args(argv)
 
     print("=" * 70)
@@ -54,7 +57,10 @@ def main(argv=None) -> int:
     print(f"[calib] loaded base checkpoint (lab threshold {fc.threshold:.4f})")
 
     print(f"[calib] building windows from benign flows: {args.flows}")
-    win = live_windows(args.flows, campaign_id="calib-benign")
+    win = live_windows(
+        args.flows, campaign_id="calib-benign",
+        entity_granularity=args.entity_granularity,
+    )
     n_hosts = win.groupby(["campaign_id", "entity_id"]).ngroups
     print(f"[calib] {len(win):,} benign host-windows across {n_hosts} hosts")
 

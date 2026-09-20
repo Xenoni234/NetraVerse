@@ -124,7 +124,7 @@ class WindowConfig:
     horizons: tuple[int, ...] = HORIZONS
     rollout_steps: int = ROLLOUT_STEPS
     min_windows_per_entity: int = MIN_WINDOWS_PER_ENTITY
-    entity_granularity: str = "src_ip"   # src_ip | src_dst_pair
+    entity_granularity: str = "src_ip"   # src_ip | dst_ip | src_dst_pair
     history_policy: str = "strict"  # strict | masked (future targets always observed)
     min_observed_history: int = 3
 
@@ -173,7 +173,8 @@ class SequenceBatch:
 def entity_key(flows: pd.DataFrame, granularity: str = "src_ip") -> pd.Series:
     """Derive ``entity_id`` from flow records.
 
-    ``src_ip`` -> the source host; ``src_dst_pair`` -> ``"<src>><dst>"``.
+    ``src_ip`` -> the source host; ``dst_ip`` -> the destination host;
+    ``src_dst_pair`` -> ``"<src>><dst>"``.
     """
     if granularity == "src_ip":
         if "src_ip" not in flows.columns:
@@ -183,6 +184,12 @@ def entity_key(flows: pd.DataFrame, granularity: str = "src_ip") -> pd.Series:
                 "(TrafficLabelling) or the one 2018 day that carries IPs."
             )
         return flows["src_ip"].astype("string")
+    if granularity == "dst_ip":
+        if "dst_ip" not in flows.columns:
+            raise ValueError(
+                "Destination-host state needs a 'dst_ip' column, but this frame has none."
+            )
+        return flows["dst_ip"].astype("string")
     if granularity == "src_dst_pair":
         return (flows["src_ip"].astype("string") + ">" + flows["dst_ip"].astype("string"))
     raise ValueError(f"Unknown entity_granularity {granularity!r}")
