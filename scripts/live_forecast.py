@@ -33,7 +33,7 @@ import pandas as pd
 
 from src.inference.engine import FEATURE_LABELS, load_forecaster
 from src.inference.live import live_windows
-from src.inference.live_state import make_live_event
+from src.inference.live_state import infer_behavioral_stage, make_live_event
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -101,18 +101,31 @@ def forecast_once(fc, flows_path: str, horizon: int, sustain: int, *, mc_samples
                    for level, ks in levels.items()}
         alert_level = next((level for level in ("urgent", "warning", "advisory") if crossed[level]), "none")
         crossed_horizons = [k for ks in crossed.values() for k in ks]
+        alerting = bool(len(rk) >= sustain and (rk[-sustain:] >= selected_threshold).all())
+        model_stage = int(last[f"stage_k{horizon}"])
+        behavioral_stage = infer_behavioral_stage(last)
+        # Keep the model output for auditability.  A strong live signature may
+        # supply a conservative stage only when the learned head says BENIGN;
+        # this prevents a high-risk live alert from becoming an unhelpful
+        # BENIGN/Monitor-only result under domain shift.
+        stage = model_stage or (behavioral_stage if alerting else 0)
+        stage_source = "model" if model_stage else (
+            "behavioral_fallback" if behavioral_stage else "model"
+        )
         rows.append({
             "issued_at": now,
             "host": ent,
             "last_window": last["window_start"],
             **{f"risk_k{k}": float(last[f"risk_k{k}"]) for k in fc.horizons},
-            "stage": int(last[f"stage_k{horizon}"]),
-            "alerting": bool(len(rk) >= sustain and (rk[-sustain:] >= selected_threshold).all()),
+            "stage": stage,
+            "model_predicted_stage": model_stage,
+            "stage_source": stage_source,
+            "alerting": alerting,
             "alert_level": alert_level,
             "earliest_warning_horizon": max(crossed_horizons) if crossed_horizons else None,
             **{f"risk_lo_k{k}": float(last[f"risk_lo_k{k}"]) for k in fc.horizons if f"risk_lo_k{k}" in last},
             **{f"risk_hi_k{k}": float(last[f"risk_hi_k{k}"]) for k in fc.horizons if f"risk_hi_k{k}" in last},
-            "predicted_stage": int(last[f"stage_k{horizon}"]),
+            "predicted_stage": stage,
         })
     return pd.DataFrame(rows)
 

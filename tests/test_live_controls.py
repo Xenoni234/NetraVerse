@@ -4,7 +4,12 @@ import json
 
 import pytest
 
-from src.inference.live_state import classify_alert, make_live_event, recommended_action
+from src.inference.live_state import (
+    classify_alert,
+    infer_behavioral_stage,
+    make_live_event,
+    recommended_action,
+)
 from src.response.firewall import ActionStore, ActionValidationError
 
 
@@ -57,6 +62,29 @@ def test_normal_or_stale_live_event_recommends_monitoring_only():
     assert recommendation["action_type"] is None
     assert recommendation["label"] == "Monitor only"
     assert recommendation["requires_human_approval"] is False
+
+
+def test_behavioral_fallback_classifies_bounded_initial_access():
+    stage = infer_behavioral_stage({
+        "n_flows": 24, "flows_per_sec": 0.8, "failed_conn_ratio": 0.75,
+        "syn_count": 12, "n_distinct_dst_port": 1,
+    })
+    assert stage == 2
+
+
+def test_behavioral_fallback_does_not_invent_stage_from_risk_alone():
+    assert infer_behavioral_stage({"baseline_deviation": 8.0}) == 0
+
+
+def test_behavioral_recommendation_explains_fallback_source():
+    event = make_live_event(
+        {"risk_k1": 0.8, "risk_k2": 0.8, "risk_k4": 0.9, "stage": 2,
+         "model_predicted_stage": 0, "stage_source": "behavioral_fallback"},
+        host="192.0.2.10", horizons=[1, 2, 4],
+        thresholds={1: .7, 2: .7, 4: .7},
+    )
+    assert event["recommended_action"]["action_type"] == "block_attack_port"
+    assert "behaviorally inferred" in event["recommended_action"]["rationale"]
 
 
 def _payload(action_type="block_attack_port", **extra):

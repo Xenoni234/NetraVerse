@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 import uuid
 
-from src.mitre.stage_mapping import STAGE_NAMES
+from src.mitre.stage_mapping import (
+    BENIGN,
+    C2,
+    EXFILTRATION,
+    IMPACT,
+    INITIAL_ACCESS,
+    LATERAL_MOVEMENT,
+    RECON,
+    STAGE_NAMES,
+)
 
 
 ALERT_STATES = {
@@ -70,7 +79,73 @@ def _confidence(row: dict[str, Any], horizons: Iterable[int]) -> float | None:
     return round(max(0.0, min(1.0, 1.0 - sum(widths) / len(widths))), 4)
 
 
-def recommended_action(*, stage: int, state: str, host: str) -> dict[str, Any]:
+def infer_behavioral_stage(row: Mapping[str, Any]) -> int:
+    """Infer a conservative live stage from a strong observed flow signature.
+
+    Live captures are unlabeled and can be far outside the training domain.  In
+    that case the risk head may correctly raise an alert while the learned stage
+    head falls back to BENIGN.  This fallback is deliberately used only by the
+    live path after an alert and only for strong, auditable signatures; it does
+    not overwrite the raw model stage.
+
+    Returns BENIGN when the observed features do not support a sufficiently
+    specific stage.  Thresholds are intentionally conservative and operate on
+    the existing 30-second host-window fields.
+    """
+    def value(name: str) -> float:
+        try:
+            return float(row.get(name, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    n_flows = value("n_flows")
+    flows_per_sec = value("flows_per_sec")
+    failed = value("failed_conn_ratio")
+    syn = value("syn_count")
+    dst_ports = value("n_distinct_dst_port")
+    dst_ips = value("n_distinct_dst_ip")
+    new_peers = value("new_peer_count")
+    port_entropy = value("dst_port_entropy")
+    bytes_per_sec = value("bytes_per_sec")
+    fwd_bwd = value("fwd_bwd_ratio")
+    pkts_per_sec = value("pkts_per_sec")
+    mean_iat = value("mean_iat_s")
+    idle = value("idle_s")
+
+    # High-volume SYN/packet pressure is a more specific impact signature than
+    # a generic high risk score.
+    if (pkts_per_sec >= 50.0 and syn >= 50.0) or flows_per_sec >= 4.0:
+        return IMPACT
+
+    # Wide destination-port fan-out is the strongest live recon signature.
+    if dst_ports >= 10.0 or (port_entropy >= 2.0 and new_peers >= 3.0):
+        return RECON
+
+    # Repeated failed, low-fan-out service connections resemble the bounded SSH
+    # / FTP initial-access ramp used by the live test.
+    if failed >= 0.5 and syn >= 5.0 and dst_ports <= 4.0 and (
+        flows_per_sec >= 0.5 or n_flows >= 15.0
+    ):
+        return INITIAL_ACCESS
+
+    # Internal fan-out with new peers and no broad port scan is lateral movement.
+    if dst_ips >= 5.0 and new_peers >= 3.0:
+        return LATERAL_MOVEMENT
+
+    # Large, asymmetric outbound volume is an exfiltration-shaped signature.
+    if bytes_per_sec >= 5_000.0 and fwd_bwd >= 2.0:
+        return EXFILTRATION
+
+    # Periodic, low-volume traffic with long idle/arrival gaps is C2-shaped.
+    if 1.0 <= n_flows <= 12.0 and mean_iat >= 2.0 and idle >= 2.0:
+        return C2
+
+    return BENIGN
+
+
+def recommended_action(
+    *, stage: int, state: str, host: str, stage_source: str = "model"
+) -> dict[str, Any]:
     """Return the current advisory response for one live forecast.
 
     This is deliberately a recommendation, not an execution request.  The
@@ -101,6 +176,7 @@ def recommended_action(*, stage: int, state: str, host: str) -> dict[str, Any]:
         6: "rate_limit",            # impact
     }.get(stage, "block_attack_port")
     needs_port = action_type in {"block_attack_port", "rate_limit"}
+    source_text = "behaviorally inferred" if stage_source == "behavioral_fallback" else "predicted"
     return {
         "action_type": action_type,
         "label": action_type.replace("_", " "),
@@ -111,7 +187,7 @@ def recommended_action(*, stage: int, state: str, host: str) -> dict[str, Any]:
         "target_port_note": "Verify the observed service/port before approval." if needs_port else None,
         "ttl_seconds": 300,
         "stage": stage_name,
-        "rationale": f"Current {state.replace('_', ' ').lower()} for predicted {stage_name}.",
+        "rationale": f"Current {state.replace('_', ' ').lower()} for {source_text} {stage_name}.",
         "requires_human_approval": True,
         "recommendation_only": True,
     }
@@ -134,6 +210,7 @@ def make_live_event(
     horizons = [int(k) for k in horizons]
     primary = max(horizons)
     predicted_stage = int(row.get("stage", row.get(f"stage_k{primary}", 0)))
+    stage_source = str(row.get("stage_source", "model"))
     return {
         "event_id": f"alert-{uuid.uuid4().hex[:16]}",
         "issued_at": str(row.get("issued_at") or utc_now()),
@@ -152,15 +229,20 @@ def make_live_event(
         },
         "confidence": _confidence(row, horizons),
         "predicted_stage": predicted_stage,
+        "model_predicted_stage": int(row.get("model_predicted_stage", predicted_stage)),
+        "stage_source": stage_source,
         "feature_drivers": list(feature_drivers or []),
         "checkpoint": checkpoint,
         "calibration": calibration,
         "measurement_resolution_seconds": 30,
         "action": None,
         "recommended_action": recommended_action(
-            stage=predicted_stage, state=state, host=host
+            stage=predicted_stage, state=state, host=host, stage_source=stage_source
         ),
     }
 
 
-__all__ = ["ALERT_STATES", "classify_alert", "make_live_event", "recommended_action", "utc_now"]
+__all__ = [
+    "ALERT_STATES", "classify_alert", "infer_behavioral_stage", "make_live_event",
+    "recommended_action", "utc_now",
+]
