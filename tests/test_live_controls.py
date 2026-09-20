@@ -66,8 +66,8 @@ def test_normal_or_stale_live_event_recommends_monitoring_only():
 
 def test_behavioral_fallback_classifies_bounded_initial_access():
     stage = infer_behavioral_stage({
-        "n_flows": 24, "flows_per_sec": 0.8, "failed_conn_ratio": 0.75,
-        "syn_count": 12, "n_distinct_dst_port": 1,
+        "n_flows": 6, "flows_per_sec": 0.2, "failed_conn_ratio": 0.5,
+        "syn_count": 4, "n_distinct_dst_port": 2,
     })
     assert stage == 2
 

@@ -123,8 +123,8 @@ def infer_behavioral_stage(row: Mapping[str, Any]) -> int:
 
     # Repeated failed, low-fan-out service connections resemble the bounded SSH
     # / FTP initial-access ramp used by the live test.
-    if failed >= 0.5 and syn >= 5.0 and dst_ports <= 4.0 and (
-        flows_per_sec >= 0.5 or n_flows >= 15.0
+    if failed >= 0.5 and syn >= 3.0 and dst_ports <= 4.0 and (
+        flows_per_sec >= 0.15 or n_flows >= 6.0
     ):
         return INITIAL_ACCESS
 

@@ -103,7 +103,8 @@ def forecast_once(fc, flows_path: str, horizon: int, sustain: int, *, mc_samples
         crossed_horizons = [k for ks in crossed.values() for k in ks]
         alerting = bool(len(rk) >= sustain and (rk[-sustain:] >= selected_threshold).all())
         model_stage = int(last[f"stage_k{horizon}"])
-        behavioral_stage = infer_behavioral_stage(last)
+        observed_window = hw.sort_values("window_start").iloc[-1]
+        behavioral_stage = infer_behavioral_stage(observed_window)
         # Keep the model output for auditability.  A strong live signature may
         # supply a conservative stage only when the learned head says BENIGN;
         # this prevents a high-risk live alert from becoming an unhelpful
