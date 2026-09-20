@@ -83,11 +83,13 @@ def _feature_drivers(fc, host_windows: pd.DataFrame, *, top_k: int = 5) -> list[
 def forecast_once(
     fc, flows_path: str, horizon: int, sustain: int, *, mc_samples: int = 0,
     entity_granularity: str = "dst_ip", target_hosts: set[str] | None = None,
+    max_files: int = 60,
 ) -> pd.DataFrame:
     """One pass: build windows from current flows, forecast latest risk per host."""
     win = live_windows(
         flows_path, campaign_id="live", entity_granularity=entity_granularity,
         target_hosts=target_hosts,
+        max_files=max_files,
     )
     now = datetime.now(timezone.utc).isoformat()
     rows = []
@@ -155,6 +157,8 @@ def main(argv=None) -> int:
                     help="live host identity; dst_ip is correct for inbound attacks")
     ap.add_argument("--target-host", action="append", default=[],
                     help="destination host to monitor (repeat for an allowlist); required for dst_ip")
+    ap.add_argument("--max-files", type=int, default=60,
+                    help="newest capture CSVs to read per poll; 60 is about 30 minutes at 30s/chunk")
     ap.add_argument("--once", action="store_true", help="run a single pass and exit")
     args = ap.parse_args(argv)
     if args.entity_granularity == "dst_ip" and not args.target_host:
@@ -188,6 +192,7 @@ def main(argv=None) -> int:
                     mc_samples=max(0, args.mc_samples),
                     entity_granularity=args.entity_granularity,
                     target_hosts=target_hosts,
+                    max_files=args.max_files,
                 )
             except FileNotFoundError:
                 print("[live] no flows yet, waiting…")
@@ -208,7 +213,9 @@ def main(argv=None) -> int:
                 preds = pd.DataFrame(fresh_rows)
             if not preds.empty:
                 history.append(preds)
-                pd.concat(history, ignore_index=True).to_parquet(out, index=False)
+                history = history[-240:]
+                parquet_history = [frame.dropna(axis=1, how="all") for frame in history]
+                pd.concat(parquet_history, ignore_index=True).to_parquet(out, index=False)
                 threshold_map = {int(k): fc.threshold_for_horizon(k) for k in fc.horizons}
                 current_state = {}
                 new_events = []
@@ -216,6 +223,7 @@ def main(argv=None) -> int:
                     args.flows, campaign_id="live",
                     entity_granularity=args.entity_granularity,
                     target_hosts=target_hosts,
+                    max_files=args.max_files,
                 )
                 for row in preds.to_dict("records"):
                     host = str(row["host"])

@@ -103,7 +103,7 @@ def _detect_map(columns: list[str]) -> tuple[str, dict]:
 
 def load_live_flows(
     path: Path | str, *, campaign_id: str = "live", return_report: bool = False,
-    preserve_labels: bool = False,
+    preserve_labels: bool = False, max_files: int | None = None,
 ):
     """Read CICFlowMeter CSV(s) into a unified flow frame.
 
@@ -117,6 +117,8 @@ def load_live_flows(
         path: a CICFlowMeter CSV file, or a directory of them.
         campaign_id: label for this capture session.
         return_report: when True, return ``(frame, report)`` instead of just the frame.
+        max_files: when set, read only the newest CSV files. This bounds live
+            polling cost while retaining the recent history needed for forecasting.
 
     Returns:
         Unified flow frame ready for :func:`src.data.windowing.build_windows`, or
@@ -124,6 +126,8 @@ def load_live_flows(
     """
     path = Path(path)
     files = sorted(path.glob("*.csv")) if path.is_dir() else [path]
+    if max_files is not None and max_files > 0 and len(files) > max_files:
+        files = files[-max_files:]
     if not files:
         raise FileNotFoundError(f"No CICFlowMeter CSVs found at {path}")
 
@@ -134,7 +138,13 @@ def load_live_flows(
         df.columns = [str(c).strip() for c in df.columns]
         df = df.loc[:, ~pd.Index(df.columns).duplicated()]
         frames.append(df)
-    raw = pd.concat(frames, ignore_index=True)
+    usable = [frame for frame in frames if not frame.empty]
+    if not usable:
+        raw = frames[0]
+    elif len(usable) == 1:
+        raw = usable[0]
+    else:
+        raw = pd.concat(usable, ignore_index=True)
     report = {"rows_read": int(len(raw))}
     label_source = next((c for c in raw.columns if str(c).strip().lower() in
                          {"label", "attack_cat", "attack_category"}), None)
@@ -214,10 +224,10 @@ def load_live_flows(
 
 def live_windows(
     path: Path | str, *, campaign_id: str = "live", entity_granularity: str = "src_ip",
-    target_hosts: set[str] | None = None,
+    target_hosts: set[str] | None = None, max_files: int | None = None,
 ) -> pd.DataFrame:
     """Convenience: live flows -> per-host 30 s state windows (ready to forecast)."""
-    flows = load_live_flows(path, campaign_id=campaign_id)
+    flows = load_live_flows(path, campaign_id=campaign_id, max_files=max_files)
     windows = W.build_windows(flows, W.WindowConfig(entity_granularity=entity_granularity))
     if target_hosts:
         wanted = {str(host) for host in target_hosts}
