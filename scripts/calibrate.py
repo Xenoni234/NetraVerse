@@ -47,7 +47,12 @@ def main(argv=None) -> int:
     ap.add_argument("--entity-granularity", choices=("src_ip", "dst_ip", "src_dst_pair"),
                     default="dst_ip",
                     help="host identity used for calibration; dst_ip is correct for inbound attacks")
+    ap.add_argument("--target-host", action="append", default=[],
+                    help="destination host to calibrate (repeat for an allowlist); required for dst_ip")
     args = ap.parse_args(argv)
+    if args.entity_granularity == "dst_ip" and not args.target_host:
+        ap.error("--target-host is required when --entity-granularity=dst_ip")
+    target_hosts = {str(host) for host in args.target_host}
 
     print("=" * 70)
     print("CALIBRATION — fit alert threshold to server-benign traffic")
@@ -60,6 +65,7 @@ def main(argv=None) -> int:
     win = live_windows(
         args.flows, campaign_id="calib-benign",
         entity_granularity=args.entity_granularity,
+        target_hosts=target_hosts,
     )
     n_hosts = win.groupby(["campaign_id", "entity_id"]).ngroups
     print(f"[calib] {len(win):,} benign host-windows across {n_hosts} hosts")

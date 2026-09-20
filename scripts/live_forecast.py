@@ -82,10 +82,13 @@ def _feature_drivers(fc, host_windows: pd.DataFrame, *, top_k: int = 5) -> list[
 
 def forecast_once(
     fc, flows_path: str, horizon: int, sustain: int, *, mc_samples: int = 0,
-    entity_granularity: str = "dst_ip",
+    entity_granularity: str = "dst_ip", target_hosts: set[str] | None = None,
 ) -> pd.DataFrame:
     """One pass: build windows from current flows, forecast latest risk per host."""
-    win = live_windows(flows_path, campaign_id="live", entity_granularity=entity_granularity)
+    win = live_windows(
+        flows_path, campaign_id="live", entity_granularity=entity_granularity,
+        target_hosts=target_hosts,
+    )
     now = datetime.now(timezone.utc).isoformat()
     rows = []
     for (_, ent), hw in win.groupby(["campaign_id", "entity_id"], sort=False):
@@ -150,8 +153,13 @@ def main(argv=None) -> int:
     ap.add_argument("--entity-granularity", choices=("src_ip", "dst_ip", "src_dst_pair"),
                     default="dst_ip",
                     help="live host identity; dst_ip is correct for inbound attacks")
+    ap.add_argument("--target-host", action="append", default=[],
+                    help="destination host to monitor (repeat for an allowlist); required for dst_ip")
     ap.add_argument("--once", action="store_true", help="run a single pass and exit")
     args = ap.parse_args(argv)
+    if args.entity_granularity == "dst_ip" and not args.target_host:
+        ap.error("--target-host is required when --entity-granularity=dst_ip")
+    target_hosts = {str(host) for host in args.target_host}
 
     ckpt = args.checkpoint if Path(args.checkpoint).exists() else str(
         REPO_ROOT / "models" / "wm_final" / "best.ckpt")
@@ -162,7 +170,7 @@ def main(argv=None) -> int:
         print(f"[live] requested +{requested * 30}s is unavailable in checkpoint; using +{args.horizon * 30}s")
     print(f"[live] checkpoint={ckpt} | threshold={fc.threshold:.4f} | horizon=+{args.horizon*30}s")
     print(f"[live] watching {args.flows} every {args.interval}s "
-          f"(entity={args.entity_granularity}; Ctrl-C to stop)")
+          f"(entity={args.entity_granularity}; targets={','.join(sorted(target_hosts)) or 'all'}; Ctrl-C to stop)")
 
     out = Path(args.predictions); out.parent.mkdir(parents=True, exist_ok=True)
     history = []
@@ -179,6 +187,7 @@ def main(argv=None) -> int:
                     fc, args.flows, args.horizon, args.sustain,
                     mc_samples=max(0, args.mc_samples),
                     entity_granularity=args.entity_granularity,
+                    target_hosts=target_hosts,
                 )
             except FileNotFoundError:
                 print("[live] no flows yet, waiting…")
@@ -206,6 +215,7 @@ def main(argv=None) -> int:
                 live_win = live_windows(
                     args.flows, campaign_id="live",
                     entity_granularity=args.entity_granularity,
+                    target_hosts=target_hosts,
                 )
                 for row in preds.to_dict("records"):
                     host = str(row["host"])

@@ -18,13 +18,13 @@ first demonstration. Then start the server-side forecaster and API:
 
 ```bash
 python scripts/calibrate.py --flows ~/nv_flows --checkpoint models/wm_sih_demo/best.ckpt \
-  --out models/wm_server/best.ckpt --entity-granularity dst_ip
+  --out models/wm_server/best.ckpt --entity-granularity dst_ip --target-host 100.72.80.52
 
 NETRAVERSE_OPERATOR_TOKEN='use-a-long-random-token' \
 NETRAVERSE_MANAGEMENT_IPS='100.81.46.8,100.72.80.52' \
 NETRAVERSE_LIVE_DRY_RUN=1 \
 python scripts/live_forecast.py --flows ~/nv_flows --checkpoint models/wm_server/best.ckpt \
-  --interval 5 --mc-samples 8 --entity-granularity dst_ip
+  --interval 5 --mc-samples 8 --entity-granularity dst_ip --target-host 100.72.80.52
 ```
 
 In another server terminal:
