@@ -187,7 +187,7 @@ def main(argv=None) -> int:
     try:
         while True:
             try:
-                preds = forecast_once(
+                current_preds = forecast_once(
                     fc, args.flows, args.horizon, args.sustain,
                     mc_samples=max(0, args.mc_samples),
                     entity_granularity=args.entity_granularity,
@@ -196,26 +196,28 @@ def main(argv=None) -> int:
                 )
             except FileNotFoundError:
                 print("[live] no flows yet, waiting…")
-                preds = pd.DataFrame()
-            if not preds.empty:
+                current_preds = pd.DataFrame()
+            if not current_preds.empty:
                 # Poll frequently for low UI latency, but only persist a new
                 # forecast when a new completed model window exists.  This
                 # prevents duplicate rows from inflating the event log and
                 # keeps the feed age honest.
                 fresh_rows = []
-                for row in preds.to_dict("records"):
+                fresh_windows = {}
+                for row in current_preds.to_dict("records"):
                     host = str(row["host"])
                     window = str(row["last_window"])
                     if last_prediction_window.get(host) == window:
                         continue
                     last_prediction_window[host] = window
+                    fresh_windows[host] = window
                     fresh_rows.append(row)
-                preds = pd.DataFrame(fresh_rows)
-            if not preds.empty:
-                history.append(preds)
-                history = history[-240:]
-                parquet_history = [frame.dropna(axis=1, how="all") for frame in history]
-                pd.concat(parquet_history, ignore_index=True).to_parquet(out, index=False)
+                fresh_preds = pd.DataFrame(fresh_rows, columns=current_preds.columns)
+                if not fresh_preds.empty:
+                    history.append(fresh_preds)
+                    history = history[-240:]
+                    parquet_history = [frame.dropna(axis=1, how="all") for frame in history]
+                    pd.concat(parquet_history, ignore_index=True).to_parquet(out, index=False)
                 threshold_map = {int(k): fc.threshold_for_horizon(k) for k in fc.horizons}
                 current_state = {}
                 new_events = []
@@ -225,7 +227,7 @@ def main(argv=None) -> int:
                     target_hosts=target_hosts,
                     max_files=args.max_files,
                 )
-                for row in preds.to_dict("records"):
+                for row in current_preds.to_dict("records"):
                     host = str(row["host"])
                     host_hw = live_win.loc[live_win.entity_id.astype(str) == host]
                     event = make_live_event(
@@ -238,8 +240,9 @@ def main(argv=None) -> int:
                     if event["forecast_state"] != old_state:
                         new_events.append(event)
                     current_state[host] = event
-                    timeline_by_host.setdefault(host, []).append(row)
-                    timeline_by_host[host] = timeline_by_host[host][-24:]
+                    if fresh_windows.get(host) == str(row["last_window"]):
+                        timeline_by_host.setdefault(host, []).append(row)
+                        timeline_by_host[host] = timeline_by_host[host][-24:]
                     previous[host] = row
                     last_event_state[host] = event["forecast_state"]
                 last_state = current_state
@@ -256,15 +259,15 @@ def main(argv=None) -> int:
                     with events_path.open("a", encoding="utf-8") as fh:
                         for event in new_events:
                             fh.write(json.dumps(event, default=str) + "\n")
-                alerts = preds[preds["alerting"]]
+                alerts = current_preds[current_preds["alerting"]]
                 stamp = datetime.now().strftime("%H:%M:%S")
                 if not alerts.empty:
                     for r in alerts.itertuples():
                         print(f"  [{stamp}] ⚠ ALERT host={r.host} "
                               f"risk(+{args.horizon*30}s)={getattr(r, f'risk_k{args.horizon}'):.2f}")
                 else:
-                    top = preds.sort_values(f"risk_k{args.horizon}", ascending=False).iloc[0]
-                    print(f"  [{stamp}] ok | {len(preds)} hosts | "
+                    top = current_preds.sort_values(f"risk_k{args.horizon}", ascending=False).iloc[0]
+                    print(f"  [{stamp}] ok | {len(current_preds)} hosts | "
                           f"top risk {top[f'risk_k{args.horizon}']:.2f} ({top['host']})")
             if args.once:
                 break
