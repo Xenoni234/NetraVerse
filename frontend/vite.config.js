@@ -13,10 +13,16 @@ const routeDocuments = {
   "/network": "src/pages/Network/index.html",
   "/validate": "src/pages/Validate/index.html",
   "/model": "src/pages/Model/index.html",
-  "/live": "src/pages/Live/index.html"
+  "/live": "src/pages/Live/index.html",
+  "/topology": "src/pages/Topology/index.html"
 };
 
+// The API runs on the sensor (Tailscale 100.72.80.52:8000). Proxying /api through
+// the dev server lets pages call it same-origin (no CORS / private-network blocks).
+const API_TARGET = process.env.NV_API_TARGET || "http://100.72.80.52:8000";
+
 export default defineConfig({
+  server: { proxy: { "/api": { target: API_TARGET, changeOrigin: true } } },
   plugins: [{
     name: "stitch-route-documents",
     configureServer(server) {

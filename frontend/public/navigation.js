@@ -11,9 +11,10 @@
   shellStyles.href = "/app-shell.css";
   document.head.appendChild(shellStyles);
 
-  const routes = ["home", "simulate", "forecast", "attack", "investigate", "network", "validate", "model", "live"];
+  const routes = ["home", "simulate", "forecast", "attack", "investigate", "network", "validate", "model", "live", "topology"];
   const titles = { home: "Home", simulate: "Simulate", forecast: "Forecast", attack: "ATT&CK",
-    investigate: "Investigate", network: "Network", validate: "Validate", model: "Model", live: "Live" };
+    investigate: "Investigate", network: "Network", validate: "Validate", model: "Model", live: "Live",
+    topology: "Topology" };
 
   const current = (() => {
     const seg = window.location.pathname.split("/").filter(Boolean)[0];

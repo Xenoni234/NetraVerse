@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<style>
+  @layer base { html, body { margin: 0; padding: 0; } body { overscroll-behavior: none; } }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  /* topology view */
+  #nv-topo-wrap { position: fixed; top: 56px; left: 236px; right: 0; bottom: 0; display: flex; }
+  #nv-topo { position: relative; flex: 1; min-width: 0; background: #0b1220; }
+  #nv-topo canvas { display: block; width: 100%; height: 100%; }
+  #nv-topo-panel { width: 340px; background: #0f172a; color: #e2e8f0; border-left: 1px solid #1e293b;
+    padding: 16px; overflow-y: auto; font-family: "IBM Plex Sans", sans-serif; font-size: 13px; }
+  #nv-topo-panel h2 { font: 600 11px "IBM Plex Mono", monospace; letter-spacing: .12em; text-transform: uppercase; color: #64748b; margin: 18px 0 8px; }
+  #nv-topo-panel h2:first-child { margin-top: 0; }
+  #nv-topo-summary { font-size: 12px; color: #cbd5e1; line-height: 1.7; }
+  .nv-wn { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; text-align: left;
+    background: #16233b; border: 1px solid #24324d; border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; color: #e2e8f0; }
+  .nv-wn:hover { border-color: #38507a; }
+  .nv-wn-ip { font: 600 12px "IBM Plex Mono", monospace; }
+  .nv-wn-risk { font: 600 12px "IBM Plex Mono", monospace; color: #f87171; text-align: right; }
+  .nv-wn-stage { font-size: 11px; } .nv-wn-eta { font-size: 11px; color: #94a3b8; text-align: right; }
+  .nv-muted { color: #64748b; font-size: 12px; }
+  .nv-sig { margin: 6px 0; font: 11px "IBM Plex Mono", monospace; color: #94a3b8; }
+  .nv-det-head { font: 600 14px "IBM Plex Mono", monospace; margin-bottom: 8px; }
+  .nv-det-head .nv-muted { font-size: 11px; }
+  .nv-det-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .nv-det-grid > div { background: #16233b; border-radius: 6px; padding: 8px 10px; }
+  .nv-det-grid span { display: block; font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .08em; }
+  .nv-det-grid b { font: 600 14px "IBM Plex Mono", monospace; }
+  .nv-btn { margin-top: 12px; width: 100%; background: #0284c7; color: #fff; border: none; border-radius: 6px;
+    padding: 9px; font: 600 12px "IBM Plex Sans"; cursor: pointer; }
+  .nv-btn:hover { background: #0369a1; }
+  .nv-advise { margin-top: 10px; background: #16233b; border: 1px solid #24324d; border-left: 3px solid #0284c7; border-radius: 6px; padding: 10px 12px; }
+  .nv-advise-head { font: 600 13px "IBM Plex Sans"; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .nv-advise p { margin: 7px 0; color: #cbd5e1; font-size: 12px; line-height: 1.5; }
+  .nv-advise ol { margin: 6px 0 0 16px; padding: 0; color: #cbd5e1; font-size: 12px; }
+  .nv-rule { font: 11px "IBM Plex Mono", monospace; color: #fca5a5; background: #1a1420; padding: 6px 8px; border-radius: 4px; margin: 6px 0; }
+  .nv-badge { font: 600 10px "IBM Plex Mono", monospace; background: #24324d; color: #93c5fd; padding: 2px 6px; border-radius: 4px; }
+  .nv-err { color: #f87171; font-size: 12px; }
+  .nv-legend { position: absolute; left: 14px; bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px 12px; max-width: 60%;
+    font: 11px "IBM Plex Mono", monospace; color: #94a3b8; background: rgba(15,23,42,.6); padding: 8px 10px; border-radius: 6px; }
+  .nv-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+</style>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+</head>
+<body class="bg-[#f8fafc] font-sans text-slate-900 antialiased min-h-screen flex">
+<aside class="fixed left-0 top-0 h-screen w-[236px] bg-white border-r border-slate-200 z-50 flex flex-col justify-between select-none">
+<div class="flex flex-col">
+<div class="h-14 px-4 flex flex-col justify-center border-b border-slate-200">
+<div class="flex items-center gap-2"><span class="w-2 h-2 bg-[#0284c7]"></span>
+<span class="font-mono text-[11px] font-semibold tracking-wider text-slate-900 uppercase">Network Attack</span></div>
+<span class="font-mono text-[11px] font-semibold tracking-wider text-[#0284c7] uppercase mt-0.5">Forecasting</span>
+</div>
+<div class="px-4 pt-3 pb-1"><span class="text-[10px] font-mono tracking-widest text-slate-400 uppercase">Navigation</span></div>
+<nav class="flex flex-col space-y-0.5 px-2 font-mono text-[12px]">
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/home"><span class="text-slate-400">01</span><span>Home</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/simulate"><span class="text-slate-400">02</span><span>Simulate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/forecast"><span class="text-slate-400">03</span><span>Forecast</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/attack"><span class="text-slate-400">04</span><span>ATT&amp;CK</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/investigate"><span class="text-slate-400">05</span><span>Investigate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/network"><span class="text-slate-400">06</span><span>Network</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/validate"><span class="text-slate-400">07</span><span>Validate</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/model"><span class="text-slate-400">08</span><span>Model</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/live"><span class="text-slate-400">09</span><span>Live</span></a>
+<a class="flex items-center gap-2.5 px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors border-l-2 border-transparent" href="/topology"><span class="text-slate-400">10</span><span>Topology</span></a>
+</nav>
+</div>
+<div class="p-4 border-t border-slate-200 bg-slate-50/60 font-mono text-[11px] text-slate-600 space-y-1.5">
+<div class="flex items-center justify-between"><span class="text-slate-400 uppercase tracking-wider text-[10px]">Mode</span><span class="text-slate-800 font-medium">Live Network</span></div>
+<div class="flex items-center justify-between"><span class="text-slate-400 uppercase tracking-wider text-[10px]">Data</span><span id="nv-side-data" class="text-slate-800 font-medium truncate max-w-[120px]">Discovery + Forecast</span></div>
+<div id="nv-side-status" class="flex items-center gap-1.5 pt-1 text-slate-500"><span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span><span class="font-mono text-[10px] uppercase tracking-wider font-semibold">Connecting…</span></div>
+</div>
+</aside>
+<div class="pl-[236px] min-h-screen flex-1 flex flex-col">
+<header class="fixed top-0 left-[236px] right-0 h-14 bg-white border-b border-slate-200 z-40 flex items-center justify-between gap-4 px-4">
+<div class="flex items-center gap-3 shrink-0">
+<span class="font-mono text-[13px] font-semibold text-slate-900 tracking-tight uppercase">Network Attack Forecasting</span>
+</div>
+<div id="nv-ctx">
+<span class="kv"><span class="k">Scenario</span><span class="v" id="nv-ctx-scenario">Live network</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="k">Mode</span><span class="v teal" id="nv-ctx-mode">Live</span></span>
+<span class="sep">|</span>
+<span class="kv"><span class="v" id="nv-ctx-clock">00:00:00 UTC</span></span>
+</div>
+</header>
+<div id="nv-topo-wrap">
+  <div id="nv-topo">
+    <div class="nv-legend">
+      <span><i style="background:#64748b"></i>Benign</span>
+      <span><i style="background:#f59e0b"></i>Recon</span>
+      <span><i style="background:#f97316"></i>Initial Access</span>
+      <span><i style="background:#a855f7"></i>Lateral</span>
+      <span><i style="background:#ef4444"></i>C2</span>
+      <span><i style="background:#dc2626"></i>Exfil</span>
+      <span><i style="background:#b91c1c"></i>Impact</span>
+    </div>
+  </div>
+  <div id="nv-topo-panel">
+    <h2>Network</h2>
+    <div id="nv-topo-summary" class="nv-muted">Loading the live network…</div>
+    <h2>Compromise forecast · who's next</h2>
+    <div id="nv-topo-next"><div class="nv-muted">Waiting for forecasts…</div></div>
+    <h2>Focused device</h2>
+    <div id="nv-topo-detail"><div class="nv-muted">Click a device in the network to inspect it.</div></div>
+  </div>
+</div>
+</div>
+<script src="/navigation.js"></script>
+<script type="module" src="/src/topology/main.js"></script>
+</body></html>

@@ -10,7 +10,8 @@ const pages = {
   network: "Network",
   validate: "Validate",
   model: "Model",
-  live: "Live"
+  live: "Live",
+  topology: "Topology"
 };
 
 await Promise.all(Object.entries(pages).map(async ([route, source]) => {
