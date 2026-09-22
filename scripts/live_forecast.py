@@ -163,6 +163,10 @@ def main(argv=None) -> int:
     ap.add_argument("--replay", action="store_true",
                     help="replay a static flows dir one 30s window per interval instead of always "
                          "exposing the final window (demo mode; the dashboard advances over time)")
+    ap.add_argument("--replay-start", default=None,
+                    help="replay only: window timestamp to begin the cursor at (e.g. "
+                         "'2026-09-20 15:58:00'); earlier windows still supply history. "
+                         "Use it to reach a known attack quickly instead of walking from the start.")
     args = ap.parse_args(argv)
     if args.entity_granularity == "dst_ip" and not args.target_host:
         ap.error("--target-host is required when --entity-granularity=dst_ip")
@@ -194,8 +198,20 @@ def main(argv=None) -> int:
             ap.error(f"--replay: no windows found under {args.flows}")
         warmup = min(len(replay_steps) - 1, 10 + max(fc.horizons))
         replay_idx = warmup
+        if args.replay_start:
+            start_ts = pd.to_datetime(args.replay_start)
+            # Match the tz-awareness of the window steps (they are UTC-aware) so
+            # the comparison below does not raise on a naive/aware mismatch.
+            ref_tz = getattr(replay_steps[0], "tzinfo", None)
+            if ref_tz is not None and start_ts.tzinfo is None:
+                start_ts = start_ts.tz_localize(ref_tz)
+            elif ref_tz is None and start_ts.tzinfo is not None:
+                start_ts = start_ts.tz_localize(None)
+            found = next((i for i, t in enumerate(replay_steps) if t >= start_ts), len(replay_steps) - 1)
+            replay_idx = min(max(found, warmup), len(replay_steps) - 1)
         print(f"[live] replay: {len(replay_steps)} windows "
-              f"({replay_steps[0]} → {replay_steps[-1]}); starting at window {replay_idx + 1}")
+              f"({replay_steps[0]} → {replay_steps[-1]}); starting at window "
+              f"{replay_idx + 1} ({replay_steps[replay_idx]})")
 
     out = Path(args.predictions); out.parent.mkdir(parents=True, exist_ok=True)
     history = []
