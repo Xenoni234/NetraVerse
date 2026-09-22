@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import pandas as pd
 
+from src.inference.detector import score_present
 from src.inference.engine import FEATURE_LABELS, load_forecaster
 from src.inference.live import live_windows
 from src.inference.live_state import infer_behavioral_stage, make_live_event
@@ -269,11 +270,18 @@ def main(argv=None) -> int:
                 for row in current_preds.to_dict("records"):
                     host = str(row["host"])
                     host_hw = live_win.loc[live_win.entity_id.astype(str) == host]
+                    # Dual-engine: present-state detector scores the current window
+                    # (attack now), independent of the forecaster's future risk.
+                    verdict = None
+                    if not host_hw.empty:
+                        observed = host_hw.sort_values("window_start").iloc[-1]
+                        verdict = score_present(observed).to_json()
                     event = make_live_event(
                         row, host=host, horizons=fc.horizons, thresholds=threshold_map,
                         previous=previous.get(host), checkpoint=str(ckpt),
                         calibration="horizon calibrator" if fc.calibrator else "server threshold",
                         feature_drivers=_feature_drivers(fc, host_hw),
+                        detector=verdict,
                     )
                     old_state = last_event_state.get(host)
                     if event["forecast_state"] != old_state:

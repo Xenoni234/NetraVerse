@@ -204,6 +204,7 @@ def make_live_event(
     checkpoint: str = "",
     calibration: str = "server threshold",
     feature_drivers: list[dict[str, Any]] | None = None,
+    detector: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state, crossed = classify_alert(
         row, horizons=horizons, thresholds=thresholds, previous=previous
@@ -233,6 +234,8 @@ def make_live_event(
         "model_predicted_stage": int(row.get("model_predicted_stage", predicted_stage)),
         "stage_source": stage_source,
         "feature_drivers": list(feature_drivers or []),
+        "detector": detector or {"attack_now": 0.0, "stage": 0, "stage_name": "BENIGN",
+                                 "signature": "no present-state telemetry", "scores": {}},
         "checkpoint": checkpoint,
         "calibration": calibration,
         "measurement_resolution_seconds": 30,
