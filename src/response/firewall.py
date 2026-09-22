@@ -72,18 +72,22 @@ class NftablesExecutor:
     every rule created by that action without depending on a fragile rule handle.
     """
 
-    def __init__(self, *, nft_binary: str = "nft", timeout: float = 5.0):
+    def __init__(self, *, nft_binary: str = "nft", timeout: float = 5.0, sudo: bool | None = None):
         self.nft_binary = nft_binary
         self.timeout = timeout
+        # Real enforcement usually needs root; prepend sudo unless told otherwise
+        # (set up passwordless `sudo nft` on the sensor so this never prompts).
+        self.sudo = (os.environ.get("NETRAVERSE_NFT_SUDO", "1") == "1") if sudo is None else bool(sudo)
 
     @staticmethod
     def _table_name(action_id: str) -> str:
         return f"nv_{action_id[:16]}"
 
     def _run(self, args: list[str]) -> str:
+        cmd = (["sudo", "-n"] if self.sudo else []) + [self.nft_binary, *args]
         try:
             result = subprocess.run(
-                [self.nft_binary, *args],
+                cmd,
                 check=True,
                 capture_output=True,
                 text=True,

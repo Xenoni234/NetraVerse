@@ -33,7 +33,9 @@ if str(ROOT) not in sys.path:
 from src.data.windowing import apply_scaler
 from src.inference.engine import FEATURE_LABELS, load_forecaster, lead_time_seconds, explain_window
 from src.inference.live_state import recommended_action
-from src.response.firewall import ActionStore, ActionValidationError
+from src.response.firewall import ActionStore, ActionValidationError, NftablesExecutor
+from src.response.router_enforce import CompositeExecutor, RouterExecutor
+from src.decision.llm_advisor import advise as llm_advise
 from src.explain.shap_wrapper import RiskExplainer
 from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIONS, stage_defence
 from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
@@ -68,11 +70,18 @@ app.add_middleware(CORSMiddleware, allow_origins=[allowed_origin] if allowed_ori
 _STATE = {"forecaster": None, "explainer": None, "baseline": None, "gallery": None,
           "gallery_path": None, "endpoint_frames": {}, "lock": threading.RLock()}
 _UPLOADS: dict[str, dict] = {}
+# Real enforcement is the default for the live-network build: an approved action
+# actually applies (sensor nftables + router) with a TTL auto-rollback. Set
+# NETRAVERSE_LIVE_DRY_RUN=1 to fall back to a safe simulation.
+_REAL_ENFORCE = os.environ.get("NETRAVERSE_LIVE_DRY_RUN", "0") != "1"
 _LIVE_ACTIONS = ActionStore(
     LIVE_ACTIONS,
-    dry_run=os.environ.get("NETRAVERSE_LIVE_DRY_RUN", "1") != "0",
+    dry_run=not _REAL_ENFORCE,
+    enforce_enabled=_REAL_ENFORCE,
     management_ips={ip.strip() for ip in os.environ.get(
-        "NETRAVERSE_MANAGEMENT_IPS", "100.81.46.8,100.72.80.52").split(",") if ip.strip()},
+        "NETRAVERSE_MANAGEMENT_IPS",
+        "100.81.46.8,100.72.80.52,192.168.0.203").split(",") if ip.strip()},
+    executor=CompositeExecutor(NftablesExecutor(), RouterExecutor()),
 )
 
 
@@ -493,6 +502,33 @@ def network_topology():
                 "note": "No network roster yet. Run scripts/discover_network.py on the sensor."}
     roster["available"] = bool(roster.get("devices"))
     return _json_safe(roster)
+
+
+@app.get("/api/network/advise")
+def network_advise(host: str):
+    """On-demand two-tier LLM actionable for one device's current forecast.
+
+    Called when the operator focuses a device; kept off the hot polling path so
+    the live feed stays fast. Falls back to the deterministic recommendation when
+    Ollama is unavailable.
+    """
+    live = _read_live_state() or {}
+    entry = next((h for h in (live.get("hosts") or []) if str(h.get("host")) == str(host)), None)
+    if entry is None:
+        return {"available": False, "host": host,
+                "note": "No live forecast for this device (not currently monitored)."}
+    ctx = {
+        "host": str(host), "hostname": entry.get("hostname"), "role": entry.get("role", "device"),
+        "forecast_state": entry.get("forecast_state", "NORMAL"),
+        "peak_risk": entry.get("peak_risk", 0.0), "risk": entry.get("risk", {}),
+        "stage": entry.get("stage"), "stage_id": entry.get("stage_id", 0),
+        "detector": entry.get("detector", {}),
+        "feature_drivers": entry.get("feature_drivers", []),
+        "source_ip": entry.get("source_ip") or str(host),
+    }
+    actionable = llm_advise(ctx, management_ips=_LIVE_ACTIONS.management_ips)
+    return _json_safe({"available": True, "host": str(host),
+                       "mode": _response_mode(), "actionable": actionable})
 
 
 def _json_safe(value):
