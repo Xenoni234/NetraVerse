@@ -83,13 +83,13 @@ def _feature_drivers(fc, host_windows: pd.DataFrame, *, top_k: int = 5) -> list[
 def forecast_once(
     fc, flows_path: str, horizon: int, sustain: int, *, mc_samples: int = 0,
     entity_granularity: str = "dst_ip", target_hosts: set[str] | None = None,
-    max_files: int = 60,
+    max_files: int = 60, window_before: object | None = None,
 ) -> pd.DataFrame:
     """One pass: build windows from current flows, forecast latest risk per host."""
     win = live_windows(
         flows_path, campaign_id="live", entity_granularity=entity_granularity,
         target_hosts=target_hosts,
-        max_files=max_files,
+        max_files=max_files, window_before=window_before,
     )
     now = datetime.now(timezone.utc).isoformat()
     rows = []
@@ -160,6 +160,9 @@ def main(argv=None) -> int:
     ap.add_argument("--max-files", type=int, default=60,
                     help="newest capture CSVs to read per poll; 60 is about 30 minutes at 30s/chunk")
     ap.add_argument("--once", action="store_true", help="run a single pass and exit")
+    ap.add_argument("--replay", action="store_true",
+                    help="replay a static flows dir one 30s window per interval instead of always "
+                         "exposing the final window (demo mode; the dashboard advances over time)")
     args = ap.parse_args(argv)
     if args.entity_granularity == "dst_ip" and not args.target_host:
         ap.error("--target-host is required when --entity-granularity=dst_ip")
@@ -176,6 +179,24 @@ def main(argv=None) -> int:
     print(f"[live] watching {args.flows} every {args.interval}s "
           f"(entity={args.entity_granularity}; targets={','.join(sorted(target_hosts)) or 'all'}; Ctrl-C to stop)")
 
+    # Replay cursor: walk a static flows dir forward one window per tick so the
+    # dashboard advances instead of freezing on the final window. We warm up on
+    # ~L+max(K) windows of history, then reveal one new window each interval.
+    replay_steps: list = []
+    replay_idx = 0
+    if args.replay:
+        all_windows = live_windows(
+            args.flows, campaign_id="live", entity_granularity=args.entity_granularity,
+            target_hosts=target_hosts, max_files=args.max_files,
+        )
+        replay_steps = sorted(pd.to_datetime(all_windows["window_start"]).unique())
+        if not replay_steps:
+            ap.error(f"--replay: no windows found under {args.flows}")
+        warmup = min(len(replay_steps) - 1, 10 + max(fc.horizons))
+        replay_idx = warmup
+        print(f"[live] replay: {len(replay_steps)} windows "
+              f"({replay_steps[0]} → {replay_steps[-1]}); starting at window {replay_idx + 1}")
+
     out = Path(args.predictions); out.parent.mkdir(parents=True, exist_ok=True)
     history = []
     previous: dict[str, dict] = {}
@@ -186,6 +207,7 @@ def main(argv=None) -> int:
     state_path, events_path = Path(args.state), Path(args.events)
     try:
         while True:
+            window_before = replay_steps[min(replay_idx, len(replay_steps) - 1)] if args.replay else None
             try:
                 current_preds = forecast_once(
                     fc, args.flows, args.horizon, args.sustain,
@@ -193,6 +215,7 @@ def main(argv=None) -> int:
                     entity_granularity=args.entity_granularity,
                     target_hosts=target_hosts,
                     max_files=args.max_files,
+                    window_before=window_before,
                 )
             except FileNotFoundError:
                 print("[live] no flows yet, waiting…")
@@ -225,7 +248,7 @@ def main(argv=None) -> int:
                     args.flows, campaign_id="live",
                     entity_granularity=args.entity_granularity,
                     target_hosts=target_hosts,
-                    max_files=args.max_files,
+                    max_files=args.max_files, window_before=window_before,
                 )
                 for row in current_preds.to_dict("records"):
                     host = str(row["host"])
@@ -271,6 +294,12 @@ def main(argv=None) -> int:
                           f"top risk {top[f'risk_k{args.horizon}']:.2f} ({top['host']})")
             if args.once:
                 break
+            if args.replay:
+                if replay_idx < len(replay_steps) - 1:
+                    replay_idx += 1
+                elif replay_idx == len(replay_steps) - 1:
+                    print("[live] replay: reached the final window; holding.")
+                    replay_idx += 1  # sentinel so this prints once
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\n[live] stopped.")

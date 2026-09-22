@@ -225,13 +225,22 @@ def load_live_flows(
 def live_windows(
     path: Path | str, *, campaign_id: str = "live", entity_granularity: str = "src_ip",
     target_hosts: set[str] | None = None, max_files: int | None = None,
+    window_before: object | None = None,
 ) -> pd.DataFrame:
-    """Convenience: live flows -> per-host 30 s state windows (ready to forecast)."""
+    """Convenience: live flows -> per-host 30 s state windows (ready to forecast).
+
+    window_before: when set, keep only windows whose ``window_start`` is at or
+        before this timestamp. Used by the replay cursor to reveal the dataset
+        one window at a time instead of always exposing the final window.
+    """
     flows = load_live_flows(path, campaign_id=campaign_id, max_files=max_files)
     windows = W.build_windows(flows, W.WindowConfig(entity_granularity=entity_granularity))
     if target_hosts:
         wanted = {str(host) for host in target_hosts}
         windows = windows.loc[windows["entity_id"].astype(str).isin(wanted)].copy()
+    if window_before is not None:
+        cutoff = pd.to_datetime(window_before)
+        windows = windows.loc[pd.to_datetime(windows["window_start"]) <= cutoff].copy()
     return windows
 
 

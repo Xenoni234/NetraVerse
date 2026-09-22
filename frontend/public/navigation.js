@@ -2,7 +2,7 @@
  * NetraVerse shell wiring (shared across all 8 routes).
  * - loads the shared design system (app-shell.css)
  * - marks the active sidebar item from the real URL
- * - ticks a live UTC clock in the header (no fabricated timestamp)
+ * - ticks a live IST clock in the header (no fabricated timestamp)
  * The page content itself is rendered by api.js from the live backend.
  */
 (() => {
@@ -29,10 +29,14 @@
     else link.removeAttribute("aria-current");
   });
 
-  // Live UTC clock in the header context bar.
+  // Live IST clock in the header context bar (Asia/Kolkata, no fabricated timestamp).
   const clock = document.getElementById("nv-ctx-clock");
   if (clock) {
-    const tick = () => { clock.textContent = new Date().toISOString().slice(11, 19) + " UTC"; };
+    const tick = () => {
+      clock.textContent = new Date().toLocaleTimeString("en-GB", {
+        timeZone: "Asia/Kolkata", hour12: false,
+      }) + " IST";
+    };
     tick(); setInterval(tick, 1000);
   }
 })();
