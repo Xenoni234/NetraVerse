@@ -52,6 +52,7 @@ LIVE_PRED = ROOT / "reports/live/predictions.parquet"  # written by scripts/live
 LIVE_STATE = Path(os.environ.get("NETRAVERSE_LIVE_STATE", ROOT / "reports/live/state.json"))
 LIVE_EVENTS = Path(os.environ.get("NETRAVERSE_LIVE_EVENTS", ROOT / "reports/live/events.jsonl"))
 LIVE_ACTIONS = Path(os.environ.get("NETRAVERSE_LIVE_ACTIONS", ROOT / "reports/live/actions.json"))
+LIVE_NETWORK = Path(os.environ.get("NETRAVERSE_LIVE_NETWORK", ROOT / "reports/live/network.json"))
 LIVE_STALE_SECONDS = float(os.environ.get("NETRAVERSE_LIVE_STALE_SECONDS", "90"))
 
 # our stage id -> frontend stage label
@@ -385,6 +386,113 @@ def live_feed():
     if state is not None:
         return _json_safe(state)
     return _json_safe(_read_legacy_live_predictions())
+
+
+def _read_network_roster() -> dict | None:
+    """The discovered device roster written by scripts/discover_network.py."""
+    return _read_json_file(LIVE_NETWORK)
+
+
+def _whos_next(devices: list[dict], threshold: float) -> list[dict]:
+    """Rank telemetry-bearing devices by forecasted compromise, soonest+highest first."""
+    ranked = []
+    for d in devices:
+        if not d.get("has_telemetry"):
+            continue
+        risk = d.get("risk") or {}
+        peak = float(d.get("peak_risk", 0.0) or 0.0)
+        # Earliest horizon whose risk crosses the alert threshold = the ETA.
+        eta = None
+        for hz in sorted(risk, key=lambda h: int(str(h).strip("+s") or 0)):
+            if float(risk[hz] or 0.0) >= threshold:
+                eta = hz
+                break
+        if peak < threshold and not d.get("alerting"):
+            continue
+        ranked.append({
+            "host": d.get("host"), "hostname": d.get("hostname"),
+            "role": d.get("role"), "peak_risk": round(peak, 4),
+            "eta": eta, "stage": d.get("stage"), "stage_id": d.get("stage_id"),
+            "forecast_state": d.get("forecast_state"),
+            "detector": d.get("detector", {}),
+        })
+    ranked.sort(key=lambda r: (r["eta"] is None, r["eta"] or "+999s", -r["peak_risk"]))
+    return ranked
+
+
+@app.get("/api/network/forecast")
+def network_forecast():
+    """Whole-network view: the discovered roster merged with live per-device forecasts.
+
+    Every discovered device appears (topology truth); devices we actually have
+    flow telemetry for carry the forecast + detector, the rest are liveness-only.
+    """
+    roster = _read_network_roster()
+    live = _read_live_state() or {}
+    live_hosts = {str(h.get("host")): h for h in (live.get("hosts") or [])}
+    threshold = float(live.get("threshold", 0.5) or 0.5)
+
+    devices: list[dict] = []
+    seen: set[str] = set()
+
+    roster_devices = (roster or {}).get("devices", []) if isinstance(roster, dict) else []
+    for dev in roster_devices:
+        ip = str(dev.get("ip", ""))
+        seen.add(ip)
+        merged = {
+            "host": ip, "ip": ip, "mac": dev.get("mac"), "vendor": dev.get("vendor"),
+            "hostname": dev.get("hostname"), "role": dev.get("role", "device"),
+            "last_seen": dev.get("last_seen"), "has_telemetry": False,
+            "forecast_state": "DISCOVERED", "risk": {}, "peak_risk": 0.0,
+            "stage": "Benign", "stage_id": 0, "alerting": False,
+            "detector": {"attack_now": 0.0, "stage": 0, "stage_name": "BENIGN", "signature": ""},
+        }
+        if ip in live_hosts:
+            merged.update(live_hosts[ip])
+            merged["has_telemetry"] = True
+            merged["ip"] = ip
+        devices.append(merged)
+
+    # Live hosts not in the roster (e.g. an external attacker IP) are real too.
+    for ip, host in live_hosts.items():
+        if ip in seen:
+            continue
+        entry = dict(host)
+        entry.update({"ip": ip, "role": entry.get("role", "external"),
+                      "has_telemetry": True, "vendor": entry.get("vendor")})
+        devices.append(entry)
+
+    devices.sort(key=lambda d: (not d.get("has_telemetry"), -float(d.get("peak_risk", 0.0) or 0.0)))
+    return _json_safe({
+        "available": bool(devices),
+        "subnet": (roster or {}).get("subnet"),
+        "gateway": (roster or {}).get("gateway"),
+        "sensor": (roster or {}).get("sensor"),
+        "device_count": len(devices),
+        "monitored_count": sum(1 for d in devices if d.get("has_telemetry")),
+        "threshold": round(threshold, 4),
+        "horizons": live.get("horizons", ["+30s", "+60s", "+120s"]),
+        "mode": live.get("mode", _response_mode()),
+        "state": live.get("state", "LIVE"),
+        "age_seconds": live.get("age_seconds"),
+        "stale": live.get("stale", False),
+        "whos_next": _whos_next(devices, threshold),
+        "devices": devices,
+        "actions": live.get("actions", []),
+        "roster_generated_at": (roster or {}).get("generated_at"),
+        "note": "Discovered devices are real; forecasts run on the sensor and attack participants.",
+    })
+
+
+@app.get("/api/network/topology")
+def network_topology():
+    """The raw discovered roster (devices + links) for the 3D topology layout."""
+    roster = _read_network_roster()
+    if not roster:
+        return {"available": False, "devices": [], "links": [],
+                "note": "No network roster yet. Run scripts/discover_network.py on the sensor."}
+    roster["available"] = bool(roster.get("devices"))
+    return _json_safe(roster)
 
 
 def _json_safe(value):
