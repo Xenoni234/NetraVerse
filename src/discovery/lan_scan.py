@@ -196,11 +196,37 @@ def _oui_table() -> dict[str, str]:
     return table
 
 
+def _is_randomized(mac: str) -> bool:
+    """True if the MAC has the locally-administered bit set (privacy/random MAC)."""
+    try:
+        first = int(re.sub(r"[^0-9A-Fa-f]", "", mac)[:2], 16)
+        return bool(first & 0b10)
+    except ValueError:
+        return False
+
+
 def _vendor_for(mac: str | None) -> str | None:
     if not mac:
         return None
-    prefix = re.sub(r"[^0-9A-Fa-f]", "", mac).upper()[:6]
-    return _oui_table().get(prefix)
+    vendor = _oui_table().get(re.sub(r"[^0-9A-Fa-f]", "", mac).upper()[:6])
+    if vendor:
+        return vendor
+    return "randomized (private MAC)" if _is_randomized(mac) else None
+
+
+def _iface_mac(interface: str | None) -> str | None:
+    """The sensor's own MAC for the given interface (it never ARPs itself)."""
+    if not interface:
+        return None
+    out = _run(["ip", "-j", "link", "show", "dev", interface])
+    try:
+        for link in json.loads(out or "[]"):
+            addr = link.get("address")
+            if addr:
+                return addr.lower()
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
 
 
 def _hostname_for(ip: str) -> str | None:
@@ -312,15 +338,21 @@ def discover(ctx: NetworkContext | None = None, *, resolve_hostnames: bool = Tru
     # 3) ping sweep -> kernel neighbour table (works everywhere, no privileges)
     if len(merged) <= 1:
         _ping_sweep(cidr)
+    subnet = ipaddress.ip_network(cidr, strict=False)
     for ip, mac in _kernel_neighbours(ctx.interface).items():
-        if ip not in ipaddress.ip_network(cidr, strict=False):
+        try:
+            if ipaddress.ip_address(ip) not in subnet:
+                continue
+        except ValueError:
             continue
         d = merged.setdefault(ip, Device(ip=ip, source="ping"))
         d.mac = d.mac or mac
 
     # Always include the sensor itself, even if it never ARPs itself.
-    if ctx.sensor_ip and ctx.sensor_ip not in merged:
-        merged[ctx.sensor_ip] = Device(ip=ctx.sensor_ip, source="self")
+    if ctx.sensor_ip:
+        sensor_dev = merged.setdefault(ctx.sensor_ip, Device(ip=ctx.sensor_ip, source="self"))
+        sensor_dev.mac = sensor_dev.mac or _iface_mac(ctx.interface)
+        sensor_dev.has_telemetry = True  # the sensor is always monitored
 
     # Enrich + classify.
     def _finish(dev: Device) -> Device:
