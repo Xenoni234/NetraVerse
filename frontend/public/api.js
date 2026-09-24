@@ -338,7 +338,7 @@
     </div>`;
   }
 
-  function replayPlayer(mount, d, onUpdate, onComplete, initialStep = 0, onReset = null) {
+  function replayPlayer(mount, d, onUpdate, onComplete, initialStep = 0, onReset = null, theater = null) {
     if (!mount) return;
     const obs = d.observed || [];
     if (!obs.length) { mount.innerHTML = `<div class="nv-empty">No forecastable windows to replay.</div>`; return; }
@@ -358,7 +358,7 @@
       : (obs[i].risk >= thr * 0.6) ? "ELEVATED" : "QUIET";
     const stCls = { QUIET: "observed", ELEVATED: "elevated", ALERTING: "critical", ATTACK_ACTIVE: "critical" };
     const SPEEDS = [0.5, 1, 2, 4];
-    let step = Math.min(n - 1, Math.max(0, Number(initialStep) || 0)), playing = false, speed = 1, timer = null;
+    let step = Math.min(n - 1, Math.max(0, Number(initialStep) || 0)), playing = false, speed = 1, timer = null, decided = false;
     function leadTxtLegacy(i) {
       if (alertIdx < 0) return d.ground_truth ? "no sustained alert" : "monitoring (unlabelled upload)";
       if (i < alertIdx) return "monitoring…";
@@ -457,10 +457,38 @@
       if (a === "playpause") playing ? stop() : play();
       else if (a === "fwd") { stop(); step = Math.min(n - 1, step + 1); render(); if (step === n - 1 && onComplete) onComplete(); }
       else if (a === "back") { stop(); step = Math.max(0, step - 1); render(); }
-      else if (a === "restart") { stop(); step = 0; if (onReset) onReset(); render(); }
+      else if (a === "restart") { stop(); step = 0; decided = false; if (onReset) onReset(); render(); }
     }
-    function play() { playing = true; render(); timer = setInterval(() => { if (step >= n - 1) { stop(); if (onComplete) onComplete(); render(); return; } step++; render(); }, 900 / speed); }
+    function play() {
+      playing = true; render();
+      timer = setInterval(() => {
+        if (step >= n - 1) { stop(); if (onComplete) onComplete(); render(); return; }
+        // Decision theater: auto-pause at the first alert and hand control to the caller.
+        if (theater && theater.decisionAt >= 0 && !decided && step + 1 >= theater.decisionAt) {
+          step = theater.decisionAt; decided = true; render(); stop();
+          if (theater.onDecision) theater.onDecision(step, obs[step]);
+          return;
+        }
+        step++; render();
+      }, 900 / speed);
+    }
     function stop() { playing = false; if (timer) { clearInterval(timer); timer = null; } }
+    // Control handle so the caller can resume, and rewrite the future risk to the
+    // model's mitigated curve after a decision is accepted.
+    mount.__nvReplay = {
+      resume: () => play(), pause: stop, render: () => render(),
+      get step() { return step; },
+      applyMitigation(cutStep, mitigatedArr) {
+        const map = new Map((mitigatedArr || []).map((m) => [Date.parse(String(m.window_start).replace(" ", "T")), Number(m.risk)]));
+        for (let i = Math.max(0, cutStep); i < n; i++) {
+          const t = Date.parse(obs[i].t);
+          if (obs[i]._baseRisk == null) obs[i]._baseRisk = obs[i].risk;
+          obs[i].risk = map.has(t) ? map.get(t) : 0;  // 0 = fully contained
+          obs[i].mitigated = true;
+        }
+        render();
+      },
+    };
     render();
   }
 
@@ -571,7 +599,7 @@
       `<div id="nv-replay-pending">${card("Replay result", `<p class="nv-note">Peak risk, full progression and lead time will appear when replay reaches the end.</p><div id="nv-current-replay"></div>`)}</div>` +
       section("Live replay", "Streaming forecast â€” step by step",
         "Play the capture forward one 30-second window at a time and watch the forecast rise and alert before the attack lands.",
-        `<div id="nv-replay-host"></div>`, "accent") +
+        `<div id="nv-replay-host"></div><div id="nv-decision-theater" style="display:none"></div><div id="nv-theater-compare"></div>`, "accent") +
       `<div id="nv-deferred" style="display:none">` +
       plainBlock(d.plain_language) +
       card("", `<div class="nv-grid">
@@ -596,14 +624,70 @@
       decisionLog(d) +
       `<div id="nv-decision-support"></div></div>`;
     const replayKey = `nv_replay_complete:${d.upload_id || d.scenario?.campaign || d.scenario?.dataset || "capture"}:${d.scenario?.host || "host"}`;
+    const decisionState = { applied: null };
     const updateCurrent = (cur, step) => { const el = document.getElementById("nv-current-replay"); if (el) el.innerHTML = `<div class="nv-current-replay"><span class="nv-mono">window ${step + 1}/${(d.observed || []).length}</span>${riskBadge(cur.risk, d.threshold)}${stageBadge(cur.stage)}<span class="nv-mono">${hhmmss(cur.t)}</span></div>`; };
-    const finish = () => { const pending = document.getElementById("nv-replay-pending"); if (pending) pending.style.display = "none"; const deferred = document.getElementById("nv-deferred"); if (deferred) deferred.style.display = "block"; try { sessionStorage.setItem(replayKey, "1"); } catch {} };
-    const resetReplay = () => { try { sessionStorage.removeItem(replayKey); } catch {} const pending = document.getElementById("nv-replay-pending"); if (pending) pending.style.display = "block"; const deferred = document.getElementById("nv-deferred"); if (deferred) deferred.style.display = "none"; };
+    const finish = () => { const pending = document.getElementById("nv-replay-pending"); if (pending) pending.style.display = "none"; const deferred = document.getElementById("nv-deferred"); if (deferred) deferred.style.display = "block"; try { sessionStorage.setItem(replayKey, "1"); } catch {} if (decisionState.applied) renderComparison(decisionState.applied); };
+    const resetReplay = () => { try { sessionStorage.removeItem(replayKey); } catch {} const pending = document.getElementById("nv-replay-pending"); if (pending) pending.style.display = "block"; const deferred = document.getElementById("nv-deferred"); if (deferred) deferred.style.display = "none"; decisionState.applied = null; const cb = document.getElementById("nv-theater-compare"); if (cb) cb.innerHTML = ""; const tb = document.getElementById("nv-decision-theater"); if (tb) { tb.style.display = "none"; tb.innerHTML = ""; } };
     const duplicateReplay = document.querySelector("#nv-deferred #nv-replay-host");
     if (duplicateReplay && duplicateReplay.closest(".nv-section")) duplicateReplay.closest(".nv-section").remove();
+    const replayMount = document.getElementById("nv-replay-host");
+
+    // Decision theater (upload path): auto-pause at the first sustained alert,
+    // offer model-simulated containment options, continue on the mitigated curve.
+    function wireContinue(box) { const c = box.querySelector("[data-continue]"); if (c) c.addEventListener("click", () => { box.style.display = "none"; if (replayMount.__nvReplay) replayMount.__nvReplay.resume(); }); }
+    async function renderTheater(stp, cur) {
+      const box = document.getElementById("nv-decision-theater"); if (!box) return;
+      box.style.display = "block";
+      box.innerHTML = `<div class="nv-theater"><div class="nv-theater-head">⏸ <b>Attack forecasted — decision required</b> · ${hhmmss(cur.t)} IST · risk ${pct(cur.risk)}</div><p class="nv-muted">Simulating each containment option through the world model…</p></div>`;
+      let r;
+      try { r = await api.get(`/api/simulate/options?uid=${encodeURIComponent(d.upload_id)}&host=${encodeURIComponent(d.scenario.host)}&window=${encodeURIComponent(cur.t)}`); }
+      catch (e) { box.innerHTML = `<div class="nv-theater"><span class="nv-err">${esc(e.message)}</span> <button class="nv-btn sec" data-continue="1">Continue anyway →</button></div>`; wireContinue(box); return; }
+      const opts = r.options || [];
+      box.innerHTML = `<div class="nv-theater">
+        <div class="nv-theater-head">⏸ <b>Attack forecasted — ${esc(r.stage)}</b> · ${hhmmss(cur.t)} IST · risk ${pct(cur.risk)}</div>
+        <p class="nv-note" style="margin:6px 0 12px">The world model simulated each option's effect on the forecast. Accept one to continue the replay as mitigated, or continue without acting.</p>
+        <div class="nv-theater-opts">${opts.map((o, i) => `
+          <div class="nv-opt${o.recommended ? " rec" : ""}">
+            <div class="nv-opt-head"><b>${esc(o.label)}</b>${o.recommended ? '<span class="nv-badge elevated">RECOMMENDED</span>' : ""}</div>
+            <p class="nv-opt-ex">${esc(o.explanation)}</p>
+            <div class="nv-opt-impact">risk drop <b>${Math.round((o.expected_risk_drop || 0) * 100)}%</b> · ${o.prevented ? '<span class="nv-opt-yes">prevents compromise</span>' : '<span class="nv-opt-no">does not prevent</span>'}</div>
+            <button class="nv-btn" data-accept="${i}">Accept &amp; apply</button>
+          </div>`).join("") || '<div class="nv-muted">No options available.</div>'}</div>
+        <button class="nv-btn sec" data-continue="1" style="margin-top:10px">Continue without acting →</button>
+      </div>`;
+      box.querySelectorAll("[data-accept]").forEach((b) => b.addEventListener("click", async () => {
+        const o = opts[Number(b.dataset.accept)]; b.disabled = true; b.textContent = "Applying…";
+        try {
+          const applied = await api.post("/api/simulate/apply", { upload_id: d.upload_id, host: d.scenario.host, action_type: o.action_type, target_ip: o.target_ip, cut_window: cur.t });
+          decisionState.applied = { option: o, cmp: applied, cutStep: stp };
+          if (replayMount.__nvReplay) replayMount.__nvReplay.applyMitigation(stp, applied.mitigated);
+          box.innerHTML = `<div class="nv-theater accepted"><b>✓ ${esc(o.label)} applied.</b> ${applied.prevented ? 'Continuing on the mitigated forecast — <span class="nv-opt-yes">attack prevented</span>.' : "Risk reduced; continuing."}</div>`;
+          if (replayMount.__nvReplay) replayMount.__nvReplay.resume();
+        } catch (e) { b.disabled = false; b.textContent = "Accept & apply"; box.insertAdjacentHTML("beforeend", `<p class="nv-err">${esc(e.message)}</p>`); }
+      }));
+      wireContinue(box);
+    }
+    function renderComparison(a) {
+      const el = document.getElementById("nv-theater-compare"); if (!el) return;
+      const cmp = a.cmp, o = a.option;
+      el.innerHTML = card("Outcome — with vs without the decision", `
+        <div class="nv-compare">
+          <div class="nv-compare-col bad"><div class="nv-compare-h">No action</div><div class="nv-compare-big">${pct(cmp.peak_before)}</div><div class="nv-muted">peak forecast risk · attack completes</div></div>
+          <div class="nv-compare-arrow">${esc(o.label)} →</div>
+          <div class="nv-compare-col good"><div class="nv-compare-h">Decision accepted</div><div class="nv-compare-big">${pct(cmp.peak_after)}</div><div class="nv-muted">${cmp.prevented ? "below threshold · attack PREVENTED" : "risk reduced"}</div></div>
+        </div>
+        <p class="nv-note">Model-simulated counterfactual: applying <b>${esc(o.label)}</b> at the alert cut forecast risk from ${pct(cmp.peak_before)} to ${pct(cmp.peak_after)} — a ${Math.round((cmp.risk_drop || 0) * 100)}% drop.</p>`);
+    }
+    let theater = null;
+    if (d.upload_id) {
+      const obsArr = d.observed || [];
+      let decisionAt = -1;
+      for (let i = 1; i < obsArr.length; i++) { if (obsArr[i].risk >= d.threshold && obsArr[i - 1].risk >= d.threshold) { decisionAt = i; break; } }
+      if (decisionAt >= 0) theater = { decisionAt, onDecision: (stp, cur) => renderTheater(stp, cur) };
+    }
     const wasComplete = sessionStorage.getItem(replayKey) === "1";
     if (wasComplete) finish();
-    replayPlayer(document.getElementById("nv-replay-host"), d, updateCurrent, finish, wasComplete ? (d.observed || []).length - 1 : 0, resetReplay);
+    replayPlayer(replayMount, d, updateCurrent, finish, wasComplete ? (d.observed || []).length - 1 : 0, resetReplay, theater);
     const rolloutSelect = document.getElementById("nv-rollout-window");
     const rolloutContent = document.getElementById("nv-rollout-content");
     const rolloutKey = `nv_rollout_window:${d.upload_id || d.scenario?.campaign || d.scenario?.dataset || "capture"}:${d.scenario?.host || "host"}`;
