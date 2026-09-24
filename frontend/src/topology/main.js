@@ -54,6 +54,7 @@ scene.add(grid);
 
 function resize() {
   const w = mount.clientWidth, h = mount.clientHeight;
+  if (!w || !h) return;  // hidden/zero-height pane → skip (avoids NaN aspect)
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
@@ -165,7 +166,7 @@ function applyForecast(fc) {
     const hot = (a && a.alerting) || (b && b.alerting);
     e.line.material.color.setHex(hot ? 0xef4444 : 0x1e3a5f);
     e.line.material.opacity = hot ? 0.9 : 0.4;
-    if (hot && Math.random() < 0.05) spawnPulse(a.basePos, b.basePos);
+    if (hot && a && b && Math.random() < 0.05) spawnPulse(a.basePos, b.basePos);
   }
   renderPanel(fc);
 }

@@ -363,16 +363,21 @@ def _coerce_numeric(chunk: pd.DataFrame) -> pd.DataFrame:
     return chunk.replace([np.inf, -np.inf], np.nan)
 
 
-def _parse_timestamps(series: pd.Series) -> pd.Series:
-    """Parse CIC-IDS2018 timestamps to tz-aware UTC.
+def _parse_timestamps(series: pd.Series, naive_tz: str = CAPTURE_TZ) -> pd.Series:
+    """Parse timestamps to tz-aware UTC.
 
     The column mixes ``dd/mm/yyyy HH:MM:SS`` with ``d/m/yyyy H:MM`` and 12-hour
     clocks. ``dayfirst=True`` is required — without it, ``02/03/2018`` silently
     parses as 3 February and the chronological split is quietly wrong.
+
+    ``naive_tz`` is the timezone a *naive* (offset-less) timestamp is assumed to
+    be in before conversion to UTC. Datasets default to UTC; live cicflowmeter
+    capture writes naive **server-local** time, so callers pass the real capture
+    tz (e.g. ``Asia/Kolkata``) — otherwise the digits get mislabeled as UTC.
     """
     parsed = pd.to_datetime(series, dayfirst=True, errors="coerce", format="mixed")
     if getattr(parsed.dtype, "tz", None) is None:
-        parsed = parsed.dt.tz_localize(CAPTURE_TZ, ambiguous="NaT", nonexistent="NaT")
+        parsed = parsed.dt.tz_localize(naive_tz, ambiguous="NaT", nonexistent="NaT")
     return parsed.dt.tz_convert("UTC")
 
 

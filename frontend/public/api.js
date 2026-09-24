@@ -40,7 +40,13 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const pct = (x) => (x == null || isNaN(x) ? "n/a" : (x * 100).toFixed(1) + "%");
   const num = (x) => (x == null || isNaN(x) ? "—" : (+x).toLocaleString());
-  const hhmmss = (iso) => (iso ? String(iso).slice(11, 19) : "—");
+  const hhmmss = (iso) => {
+    if (!iso) return "—";
+    // Backend timestamps are UTC (ISO with Z/+00:00); show them in IST.
+    const d = new Date(String(iso).replace(" ", "T"));
+    if (isNaN(d.getTime())) return String(iso).slice(11, 19);
+    return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour12: false });
+  };
   const cap = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase() : s);
   const stageName = (s) => cap(String(s || "").replace(/_/g, " "));
   const REPLAY_STAGE_META = [
@@ -759,7 +765,7 @@
       <span class="node">forecast risk ${pct(d.peak_risk)}</span></div>`;
     content.innerHTML =
       section("Evidence chain", "Why did the model forecast this?",
-        `Traced backward from the forecast for window ${hhmmss(win)} UTC.`,
+        `Traced backward from the forecast for window ${hhmmss(win)} IST.`,
         chain + `<p class="nv-note">${esc(ex.sentence)}</p>`) +
       section("Observed behaviour → feature change", "Behavioural drivers vs this host's normal", "",
         `<div class="nv-evidence">${ex.drivers.map((dr) => {
@@ -1056,49 +1062,8 @@
         Only attacks with an observable ramp (scan, brute-force, botnet beaconing) can be forecast 30–120 s ahead; single-packet exploits cannot. Risk is an onset score, not a calibrated probability. Passive reconnaissance is not always observable, and network traffic alone does not prove host compromise.</div></details>`;
   }
 
-  async function livePage(content) {
-    setCtx({ scenario: "Live server", host: "—", horizon: "+120s", mode: "Live", data: "Live feed" });
-    const telemetry = await api.get("/api/telemetry").catch(() => ({ sources: [] }));
-    async function tick() {
-      let d;
-      try { d = await api.get("/api/live"); } catch (e) { content.innerHTML = `<div class="nv-err">${esc(e.message)}</div>`; return; }
-      const age = d.age_seconds;
-      const fresh = age == null ? "unknown" : age < 60 ? `updated ${Math.round(age)} s ago` : age < 3600 ? `${Math.round(age / 60)} min ago` : `${(age / 3600).toFixed(1)} h ago`;
-      const stale = age != null && age > 120;
-      const telem = section("Telemetry readiness", "Connected evidence sources", "",
-        `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Source</th><th>Status</th><th>Identity</th><th>Timestamp</th></tr></thead>
-        <tbody>${(telemetry.sources || []).map((s) => `<tr><td>${esc(s.name)}</td><td>${stageBadge(s.status === "active" ? "ACTIVE" : "NOT CONNECTED")}</td><td>${esc(s.identity)}</td><td>${s.timestamp ? "yes" : "no"}</td></tr>`).join("")}</tbody></table></div>`) +
-        caveat("The live pipeline runs offline on the monitored host (CICFlowMeter → 30 s windows → world model). This page polls its output; it does not sniff traffic itself.");
-      if (!d.available) {
-        content.innerHTML = section("Live server monitoring", "No live feed connected", "",
-          `<div class="nv-empty">Start the live forecaster on the monitored host, then this page updates automatically:<br>
-            <code class="nv-mono">python scripts/live_forecast.py --flows &lt;flows_dir&gt; --interval 30</code><br><span class="nv-muted">${esc(d.note || "")}</span></div>`) + telem;
-        return;
-      }
-      const alertingN = d.hosts.filter((hh) => hh.alerting).length;
-      content.innerHTML =
-        card("", `<div class="nv-grid">
-          ${metric("Live hosts", num(d.n_hosts))}
-          ${metric("Alerting now", num(alertingN), { cls: alertingN ? "alert" : "" })}
-          ${metric("Alert threshold", d.threshold)}
-          ${metric("Feed freshness", `<small>${esc(fresh)}</small>`, { cls: stale ? "alert" : "ok" })}
-        </div>`) +
-        section("Live per-host forecasts", "Streaming from the monitored server",
-          "Sorted by peak forecast risk. Read-only — the API serves the offline live loop's output.",
-          `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Host</th><th>Last window</th><th class="num">+60s</th><th class="num">+90s</th><th class="num">+120s</th><th class="num">Peak</th><th>Stage</th><th>Action</th><th>Alert</th></tr></thead>
-          <tbody>${d.hosts.slice(0, 40).map((hh) => `<tr><td class="nv-mono">${esc(hh.host)}</td><td>${hhmmss(hh.last_window)}</td>
-            <td class="num">${pct(hh.risk["+60s"])}</td><td class="num">${pct(hh.risk["+90s"])}</td><td class="num">${pct(hh.risk["+120s"])}</td>
-            <td class="num">${pct(hh.peak_risk)}</td><td>${stageBadge(hh.stage)}</td><td>${esc((hh.action || {}).summary || "Monitor")}</td>
-            <td>${hh.alerting ? `<span class="nv-badge critical">${esc(hh.alert_level && hh.alert_level !== "none" ? hh.alert_level.toUpperCase() : "ALERTING")}</span>` : `<span class="nv-badge benign">clear</span>`}</td></tr>`).join("")}</tbody></table></div>`) +
-        telem;
-    }
-    await tick();
-    clearInterval(window.__nvLive); window.__nvLive = setInterval(tick, 4000);
-  }
-
-  // Operator live console.  The older livePage above is retained as a small
-  // compatibility fallback in history; this version adds the guarded response
-  // workflow without changing replay pages.
+  // Operator live console.  (A legacy `livePage` fallback was removed — it read a
+  // nonexistent `+90s` horizon and was never wired; only livePageV2 is dispatched.)
   async function livePageV2(content) {
     setCtx({ scenario: "Live server", host: "—", horizon: "+120s", mode: "Live", data: "Live feed" });
     const telemetry = await api.get("/api/telemetry").catch(() => ({ sources: [] }));
@@ -1161,7 +1126,7 @@
         const result = content.querySelector("#nv-action-preview-result");
         try {
           const p = await api.post("/api/live/actions/preview", { alert_id: host.event_id || `live-${host.host}`, host: host.host, action_type: content.querySelector("#nv-action-type").value, target_ip: content.querySelector("#nv-action-ip").value, target_port: Number(content.querySelector("#nv-action-port").value || 22), ttl_seconds: Number(content.querySelector("#nv-action-ttl").value || 300), reason: `Human review of ${host.forecast_state} ${host.stage} forecast`, mode: content.querySelector("#nv-action-mode").value }, token);
-          result.innerHTML = card("Action preview", `<p><b>${esc(p.rule)}</b></p><p class="nv-note">${p.dry_run ? "Dry-run: no firewall change will be made." : "Enforcement is enabled on the server."} Expires ${esc(p.expires_at)}.</p><button class="nv-btn" id="nv-action-approve">Approve this action</button>`);
+          result.innerHTML = card("Action preview", `<p><b>${esc(p.rule)}</b></p><p class="nv-note">${p.dry_run ? "Dry-run: no firewall change will be made." : "Enforcement is enabled on the server."} Expires ${esc(hhmmss(p.expires_at))} IST.</p><button class="nv-btn" id="nv-action-approve">Approve this action</button>`);
           result.querySelector("#nv-action-approve").addEventListener("click", async () => { try { await api.post(`/api/live/actions/${encodeURIComponent(p.preview_id)}/approve`, {}, token); await tick(); } catch (e) { result.innerHTML += `<p class="nv-err">${esc(e.message)}</p>`; } });
         } catch (e) { result.innerHTML = `<p class="nv-err">${esc(e.message)}</p>`; }
       });

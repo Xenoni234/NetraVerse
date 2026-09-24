@@ -79,14 +79,19 @@ class RouterExecutor:
             return {"enabled": False, "note": "router enforcement not configured"}
         ip = action["target_ip"]
         table = self._table(action["action_id"])
+        # Match the sensor executor's direction: destination/port-based blocks
+        # target the FORWARD *destination*; source/isolate blocks target the source.
+        dest_block = action.get("action_type") in {"block_destination_ip", "block_attack_port", "rate_limit"}
         if self.firewall == "iptables":
-            cmd = (f"iptables -I FORWARD -s {shlex.quote(ip)} -j DROP "
+            flag = "-d" if dest_block else "-s"
+            cmd = (f"iptables -I FORWARD {flag} {shlex.quote(ip)} -j DROP "
                    f"-m comment --comment {shlex.quote(table)}")
         else:  # nft (OpenWrt 22.03+)
             fam = "ip6" if ":" in ip else "ip"
+            direction = "daddr" if dest_block else "saddr"
             cmd = (f"nft add table inet {table} && "
                    f"nft add chain inet {table} fwd '{{ type filter hook forward priority -50; policy accept; }}' && "
-                   f"nft add rule inet {table} fwd {fam} saddr {ip} counter drop")
+                   f"nft add rule inet {table} fwd {fam} {direction} {ip} counter drop")
         out = self._ssh(cmd)
         return {"enabled": True, "host": self.host, "firewall": self.firewall,
                 "table": table, "rule": cmd, "output": out}

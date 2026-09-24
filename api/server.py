@@ -16,7 +16,7 @@ import secrets
 import threading
 import time
 import uuid
-from numbers import Real
+from numbers import Integral, Real
 from pathlib import Path
 
 import numpy as np
@@ -431,7 +431,13 @@ def _whos_next(devices: list[dict], threshold: float) -> list[dict]:
             "forecast_state": d.get("forecast_state"),
             "detector": d.get("detector", {}),
         })
-    ranked.sort(key=lambda r: (r["eta"] is None, r["eta"] or "+999s", -r["peak_risk"]))
+    def _eta_seconds(eta) -> int:
+        # "+30s" -> 30 so "+30s" sorts before "+120s" (string sort inverts this).
+        try:
+            return int(str(eta).strip("+s"))
+        except (TypeError, ValueError):
+            return 10 ** 9
+    ranked.sort(key=lambda r: (r["eta"] is None, _eta_seconds(r["eta"]), -r["peak_risk"]))
     return ranked
 
 
@@ -585,7 +591,11 @@ def _json_safe(value):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    if isinstance(value, Real) and not isinstance(value, bool):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Integral):
+        return int(value)  # keep ints as ints (ports/counts) — don't float them
+    if isinstance(value, Real):
         number = float(value)
         return number if math.isfinite(number) else None
     return value

@@ -191,8 +191,11 @@ class ActionStore:
         target_ip = _parse_ip(payload.get("target_ip", ""))
         needs_port = action_type in {"block_attack_port", "rate_limit"}
         port = _parse_port(payload.get("target_port"), required=needs_port)
-        if action_type == "block_source_ip" and target_ip in self.management_ips:
-            raise ActionValidationError("refusing to block a protected management IP")
+        # Never target a management IP with ANY action type — a source/destination
+        # block, isolate, or rate-limit against our own gateway/sensor/SSH host
+        # would cut off management access just as surely as block_source_ip.
+        if target_ip in self.management_ips:
+            raise ActionValidationError("refusing to target a protected management IP")
         try:
             ttl = int(payload.get("ttl_seconds", 300))
         except (TypeError, ValueError) as exc:
@@ -307,9 +310,16 @@ class ActionStore:
             return dict(record) if record else None
 
     def _expire_locked(self) -> None:
-        """Enforce TTLs when the store is observed, without a background thread."""
+        """Enforce TTLs when the store is observed.
+
+        Runs under the caller's lock, so the actual ``nft``/SSH rollback (which
+        can take seconds) is dispatched to a background thread rather than
+        executed inline — otherwise every ``/api/live`` poll that trips an
+        expiry would stall all other action operations behind the lock.
+        """
         changed = False
         now = _now()
+        to_rollback = []
         for record in self._records.values():
             if record.get("status") not in {"applied", "dry_run"}:
                 continue
@@ -317,17 +327,26 @@ class ActionStore:
             if not expires or now <= datetime.fromisoformat(str(expires).replace("Z", "+00:00")):
                 continue
             if record.get("applied"):
-                try:
-                    self.executor.rollback(record)
-                    record["rollback_at"] = _iso(now)
-                except Exception as exc:  # noqa: BLE001 - keep visible for operator review
-                    record["rollback_error"] = str(exc)
-                    continue
+                to_rollback.append(dict(record))  # copy for the worker
             record["status"] = "expired"
             record["rollback_available"] = False
             changed = True
         if changed:
             self._persist()
+        if to_rollback:
+            threading.Thread(target=self._rollback_expired, args=(to_rollback,), daemon=True).start()
+
+    def _rollback_expired(self, records: list[dict[str, Any]]) -> None:
+        """Best-effort executor rollback for expired actions, off the store lock."""
+        for record in records:
+            try:
+                self.executor.rollback(record)
+            except Exception as exc:  # noqa: BLE001 - keep visible for operator review
+                with self._lock:
+                    live = self._records.get(record["action_id"])
+                    if live is not None:
+                        live["rollback_error"] = str(exc)
+                        self._persist()
 
 
 __all__ = ["ACTION_TYPES", "ActionStore", "ActionValidationError", "NftablesExecutor"]

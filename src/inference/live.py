@@ -15,6 +15,7 @@ Handles the realities of live capture:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -185,7 +186,10 @@ def load_live_flows(
 
     if "timestamp" not in work.columns:
         raise ValueError("Live flows have no Timestamp column; CICFlowMeter must emit one.")
-    work["timestamp"] = _parse_timestamps(work["timestamp"])
+    # cicflowmeter writes naive *server-local* time; interpret it in the real
+    # capture tz (default Asia/Kolkata) so stored UTC is correct, not shifted.
+    capture_tz = os.environ.get("NETRAVERSE_CAPTURE_TZ", "Asia/Kolkata")
+    work["timestamp"] = _parse_timestamps(work["timestamp"], naive_tz=capture_tz)
     before = len(work)
     work = work[work["timestamp"].notna()].copy()
     report["bad_timestamp_dropped"] = int(before - len(work))

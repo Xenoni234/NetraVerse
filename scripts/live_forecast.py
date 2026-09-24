@@ -22,7 +22,7 @@ import math
 import sys
 import time
 from datetime import datetime, timezone
-from numbers import Real
+from numbers import Integral, Real
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +43,11 @@ def _atomic_json(path: Path, payload: object) -> None:
             return {str(k): safe(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [safe(v) for v in value]
-        if isinstance(value, Real) and not isinstance(value, bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, Integral):
+            return int(value)  # keep ints as ints, not 22.0
+        if isinstance(value, Real):
             number = float(value)
             return number if math.isfinite(number) else None
         return value
@@ -118,10 +122,14 @@ def forecast_once(
         # supply a conservative stage only when the learned head says BENIGN;
         # this prevents a high-risk live alert from becoming an unhelpful
         # BENIGN/Monitor-only result under domain shift.
-        stage = model_stage or (behavioral_stage if alerting else 0)
-        stage_source = "model" if model_stage else (
-            "behavioral_fallback" if behavioral_stage else "model"
-        )
+        # Use the behavioral stage only when it is actually the value we adopt,
+        # so stage_source never claims "behavioral_fallback" for a stage of 0.
+        if model_stage:
+            stage, stage_source = model_stage, "model"
+        elif alerting and behavioral_stage:
+            stage, stage_source = behavioral_stage, "behavioral_fallback"
+        else:
+            stage, stage_source = 0, "model"
         rows.append({
             "issued_at": now,
             "host": ent,
