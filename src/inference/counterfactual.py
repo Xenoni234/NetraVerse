@@ -19,7 +19,13 @@ from typing import Any
 
 import pandas as pd
 
-from src.data.windowing import WindowConfig, build_windows
+from src.data.windowing import (
+    MASK_COLUMNS,
+    MODEL_COLUMNS,
+    STATE_FEATURE_COLUMNS,
+    WindowConfig,
+    build_windows,
+)
 
 #: How the six supported actions edit the flow stream after the cut-point.
 #: block/isolate = remove the offending flows entirely; rate_limit = down-sample.
@@ -85,20 +91,60 @@ def mitigated_timeline(
 ) -> pd.DataFrame:
     """Re-forecast ``host``'s risk timeline as if the decision were applied.
 
-    Returns the same shape as ``forecast_host_timeline`` (rows per origin window
-    with ``risk_k*``). Empty when the host has no remaining flows (fully
-    contained) — the caller renders that as a flat, benign (risk≈0) tail.
+    Returns one row per origin window (``risk_k*``), the **same length** as the
+    baseline so the mitigated curve is fully calculated end-to-end — never a
+    zero-filled gap.
+
+    The window timeline is kept intact and only the **post-cut** windows are
+    rewritten to reflect the decision:
+
+    * traffic that survives the action (e.g. the 20 % kept by ``rate_limit``) is
+      re-derived from the edited flows — a genuine reduced-load feature vector;
+    * traffic that the action removes entirely (``block_source_ip`` /
+      ``isolate_host`` …) leaves the host **quiet** (a no-activity state), not
+      absent. Re-forecasting that sequence lets the model decay the risk
+      gradually to its own benign floor as the attack scrolls out of the 10-window
+      history — a real, calculated drop, not an imposed 0.
     """
-    edited = apply_decision(flows, action_type, cut_ts, target_ip, target_port=target_port)
-    if edited.empty:
+    work = flows.copy()
+    if "campaign_id" not in work.columns:
+        work = work.assign(campaign_id="counterfactual")
+    cfg = WindowConfig(entity_granularity=entity_granularity)
+    base_all = build_windows(work, cfg)
+    base = (base_all.loc[base_all["entity_id"].astype(str) == str(host)]
+            .sort_values("window_start").reset_index(drop=True))
+    if base.empty:
         return pd.DataFrame()
-    if "campaign_id" not in edited.columns:
-        edited = edited.assign(campaign_id="counterfactual")
-    windows = build_windows(edited, WindowConfig(entity_granularity=entity_granularity))
-    hw = windows.loc[windows["entity_id"].astype(str) == str(host)]
-    if hw.empty:
-        return pd.DataFrame()
-    return fc.forecast_host_timeline(hw, mc_samples=mc_samples)
+    if action_type == "noop":
+        return fc.forecast_host_timeline(base, mc_samples=mc_samples)
+
+    edited = apply_decision(work, action_type, cut_ts, target_ip, target_port=target_port)
+    edit_all = build_windows(edited, cfg) if not edited.empty else base.iloc[0:0]
+    edit = (edit_all.loc[edit_all["entity_id"].astype(str) == str(host)]
+            .drop_duplicates("window_start").set_index("window_start"))
+
+    cut = pd.Timestamp(cut_ts)
+    mit = base.copy()
+    post = pd.to_datetime(mit["window_start"], utc=True) >= cut
+    keeps = mit["window_start"].isin(edit.index)
+    feat_cols = [c for c in MODEL_COLUMNS if c in mit.columns and c in edit.columns]
+
+    reduced = post & keeps          # action throttled but did not remove the host
+    if reduced.any() and feat_cols:
+        aligned = edit.reindex(mit.loc[reduced, "window_start"])
+        for c in feat_cols:
+            mit.loc[reduced, c] = aligned[c].to_numpy()
+
+    removed = post & ~keeps          # action removed the host's traffic -> quiet host
+    if removed.any():
+        for c in STATE_FEATURE_COLUMNS:
+            if c in mit.columns:
+                mit.loc[removed, c] = 0.0
+        for c in MASK_COLUMNS:       # a quiet window is observed-benign, not warmup
+            if c in mit.columns:
+                mit.loc[removed, c] = 1.0
+
+    return fc.forecast_host_timeline(mit, mc_samples=mc_samples)
 
 
 def compare_timelines(
