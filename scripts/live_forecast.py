@@ -168,6 +168,9 @@ def main(argv=None) -> int:
                     help="replay only: window timestamp to begin the cursor at (e.g. "
                          "'2026-09-20 15:58:00'); earlier windows still supply history. "
                          "Use it to reach a known attack quickly instead of walking from the start.")
+    ap.add_argument("--replay-loop", action="store_true",
+                    help="replay only: when the cursor reaches the last window, wrap back to the "
+                         "start instead of holding, so the dashboard keeps updating (demo mode).")
     args = ap.parse_args(argv)
     if args.entity_granularity == "dst_ip" and not args.target_host:
         ap.error("--target-host is required when --entity-granularity=dst_ip")
@@ -321,6 +324,9 @@ def main(argv=None) -> int:
             if args.replay:
                 if replay_idx < len(replay_steps) - 1:
                     replay_idx += 1
+                elif args.replay_loop:
+                    replay_idx = warmup  # wrap back to the start so the feed keeps moving
+                    print("[live] replay: looped back to the start window.")
                 elif replay_idx == len(replay_steps) - 1:
                     print("[live] replay: reached the final window; holding.")
                     replay_idx += 1  # sentinel so this prints once

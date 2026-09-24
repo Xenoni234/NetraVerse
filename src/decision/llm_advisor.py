@@ -45,7 +45,7 @@ _DEFAULT_MGMT = {ip.strip() for ip in os.environ.get(
 
 
 def _ollama_chat(model: str, system: str, user: str, *, url: str,
-                 timeout: float = 60.0, keep_alive: str = "15m") -> dict[str, Any] | None:
+                 timeout: float = 60.0, keep_alive: str = "30m") -> dict[str, Any] | None:
     """Call Ollama /api/chat with forced JSON output; return the parsed object.
 
     ``keep_alive`` keeps the model resident in VRAM so subsequent calls are fast
@@ -60,8 +60,8 @@ def _ollama_chat(model: str, system: str, user: str, *, url: str,
         "stream": False,
         "format": "json",
         "keep_alive": keep_alive,
-        # Cap output length: the JSON reply is short, so this cuts latency a lot.
-        "options": {"temperature": 0.2, "num_predict": 320},
+        # Cap output length hard: brevity is the biggest latency lever here.
+        "options": {"temperature": 0.2, "num_predict": 200},
     }
     req = urllib.request.Request(
         f"{url}/api/chat",
@@ -136,10 +136,10 @@ _TIER2_SYS = (
     "Respond ONLY as JSON with keys: "
     f"action_type (one of: {_ACTION_LIST}), target_ip (string), target_port (integer or null), "
     "ttl_seconds (integer 60-3600), headline (short imperative action title), "
-    "rationale (2-3 sentence justification tied to the evidence), "
-    "steps (array of 2-4 short strings), confidence (0..1 float), "
+    "rationale (ONE sentence, under 25 words, tied to the evidence), "
+    "steps (exactly 2 strings, each under 6 words), confidence (0..1 float), "
     "monitor_only (boolean: true if you judge containment is NOT yet warranted). "
-    "Prefer reversible, least-disruptive containment. Never recommend blocking a management IP."
+    "Be terse. Prefer reversible, least-disruptive containment. Never block a management IP."
 )
 
 
