@@ -134,11 +134,19 @@ def load_live_flows(
 
     frames = []
     for f in files:
-        # on_bad_lines="skip": a live capture's last row may be mid-write
-        df = pd.read_csv(f, low_memory=False, on_bad_lines="skip")
+        # on_bad_lines="skip": a live capture's last row may be mid-write.
+        # A just-created capture file can be 0 bytes / header-only — skip it and
+        # wait rather than crash (EmptyDataError) so the live loop keeps polling.
+        try:
+            df = pd.read_csv(f, low_memory=False, on_bad_lines="skip")
+        except (pd.errors.EmptyDataError, OSError):
+            continue
         df.columns = [str(c).strip() for c in df.columns]
         df = df.loc[:, ~pd.Index(df.columns).duplicated()]
         frames.append(df)
+    if not frames:  # nothing readable yet (capture just started)
+        empty = pd.DataFrame(columns=list(CICFLOWMETER_PY_COLUMN_MAP.values()))
+        return (empty, {"rows_read": 0}) if return_report else empty
     usable = [frame for frame in frames if not frame.empty]
     if not usable:
         raw = frames[0]
@@ -238,6 +246,11 @@ def live_windows(
         one window at a time instead of always exposing the final window.
     """
     flows = load_live_flows(path, campaign_id=campaign_id, max_files=max_files)
+    if flows.empty:  # capture just started / no flows flushed yet — wait, don't crash
+        # Return an empty frame that still carries the index columns downstream
+        # code groups/filters on, so callers get "no windows" rather than a crash.
+        cols = list(W.STATE_INDEX_COLUMNS) + list(W.MODEL_COLUMNS)
+        return pd.DataFrame(columns=cols)
     windows = W.build_windows(flows, W.WindowConfig(entity_granularity=entity_granularity))
     if target_hosts:
         wanted = {str(host) for host in target_hosts}
