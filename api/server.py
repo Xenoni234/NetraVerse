@@ -510,20 +510,13 @@ def network_topology():
     return _json_safe(roster)
 
 
-@app.get("/api/network/advise")
-def network_advise(host: str):
-    """On-demand two-tier LLM actionable for one device's current forecast.
+_ADVISE_CACHE: dict[str, dict] = {}
+_ADVISE_LOCK = threading.Lock()
+_ADVISE_TTL = 180.0
 
-    Called when the operator focuses a device; kept off the hot polling path so
-    the live feed stays fast. Falls back to the deterministic recommendation when
-    Ollama is unavailable.
-    """
-    live = _read_live_state() or {}
-    entry = next((h for h in (live.get("hosts") or []) if str(h.get("host")) == str(host)), None)
-    if entry is None:
-        return {"available": False, "host": host,
-                "note": "No live forecast for this device (not currently monitored)."}
-    ctx = {
+
+def _advise_ctx(entry: dict, host: str) -> dict:
+    return {
         "host": str(host), "hostname": entry.get("hostname"), "role": entry.get("role", "device"),
         "forecast_state": entry.get("forecast_state", "NORMAL"),
         "peak_risk": entry.get("peak_risk", 0.0), "risk": entry.get("risk", {}),
@@ -532,9 +525,58 @@ def network_advise(host: str):
         "feature_drivers": entry.get("feature_drivers", []),
         "source_ip": entry.get("source_ip") or str(host),
     }
-    actionable = llm_advise(ctx, management_ips=_LIVE_ACTIONS.management_ips)
-    return _json_safe({"available": True, "host": str(host),
+
+
+def _cached_advise(host: str, entry: dict) -> tuple[dict, bool]:
+    """Return (actionable, cached?). Keyed by host+stage+state so it recomputes
+    only when the forecast meaningfully changes; the background pre-warm keeps it
+    hot so the operator's click is instant."""
+    key = (str(host), int(entry.get("stage_id", 0) or 0), str(entry.get("forecast_state")))
+    now = time.time()
+    with _ADVISE_LOCK:
+        c = _ADVISE_CACHE.get(str(host))
+        if c and c["key"] == key and now - c["ts"] < _ADVISE_TTL:
+            return c["result"], True
+    result = llm_advise(_advise_ctx(entry, host), management_ips=_LIVE_ACTIONS.management_ips)
+    with _ADVISE_LOCK:
+        _ADVISE_CACHE[str(host)] = {"key": key, "ts": now, "result": result}
+    return result, False
+
+
+@app.get("/api/network/advise")
+def network_advise(host: str):
+    """Two-tier LLM actionable for one device's current forecast (cached).
+
+    Kept off the hot polling path; the background pre-warm computes it for
+    alerting hosts so this usually returns instantly. Falls back to the
+    deterministic recommendation when Ollama is unavailable.
+    """
+    live = _read_live_state() or {}
+    entry = next((h for h in (live.get("hosts") or []) if str(h.get("host")) == str(host)), None)
+    if entry is None:
+        return {"available": False, "host": host,
+                "note": "No live forecast for this device (not currently monitored)."}
+    actionable, cached = _cached_advise(str(host), entry)
+    return _json_safe({"available": True, "host": str(host), "cached": cached,
                        "mode": _response_mode(), "actionable": actionable})
+
+
+def _advise_prewarm_loop() -> None:
+    """Pre-compute recommendations for alerting hosts so operator clicks are instant."""
+    while True:
+        try:
+            live = _read_live_state() or {}
+            for h in live.get("hosts", []):
+                if h.get("forecast_state") in {"EARLY_WARNING", "CONFIRMED_ALERT"}:
+                    _cached_advise(str(h.get("host")), h)
+        except Exception:  # noqa: BLE001 - a pre-warm failure must never crash the API
+            pass
+        time.sleep(20)
+
+
+@app.on_event("startup")
+def _start_advise_prewarm() -> None:
+    threading.Thread(target=_advise_prewarm_loop, daemon=True).start()
 
 
 def _json_safe(value):

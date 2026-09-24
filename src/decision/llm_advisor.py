@@ -60,7 +60,8 @@ def _ollama_chat(model: str, system: str, user: str, *, url: str,
         "stream": False,
         "format": "json",
         "keep_alive": keep_alive,
-        # Cap output length hard: brevity is the biggest latency lever here.
+        # Cap output length so a runaway generation can't stall the reply; the
+        # JSON must fit within this budget or it is discarded and we fall back.
         "options": {"temperature": 0.2, "num_predict": 200},
     }
     req = urllib.request.Request(
@@ -135,11 +136,11 @@ _TIER2_SYS = (
     "context and Tier-1's candidate action. Produce the final operator recommendation. "
     "Respond ONLY as JSON with keys: "
     f"action_type (one of: {_ACTION_LIST}), target_ip (string), target_port (integer or null), "
-    "ttl_seconds (integer 60-3600), headline (short imperative action title), "
-    "rationale (ONE sentence, under 25 words, tied to the evidence), "
-    "steps (exactly 2 strings, each under 6 words), confidence (0..1 float), "
-    "monitor_only (boolean: true if you judge containment is NOT yet warranted). "
-    "Be terse. Prefer reversible, least-disruptive containment. Never block a management IP."
+    "ttl_seconds (integer 60-3600), headline (3-5 word action title), "
+    "rationale (ONE clause, under 15 words), "
+    "steps (exactly 2 strings, each under 4 words), confidence (0..1 float), "
+    "monitor_only (boolean: true if containment is NOT yet warranted). "
+    "Be extremely terse. Prefer reversible, least-disruptive containment. Never block a management IP."
 )
 
 
