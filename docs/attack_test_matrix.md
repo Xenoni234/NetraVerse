@@ -6,6 +6,14 @@ sensor (`ssh laptop`, `/opt/netraverse`).
 
 ## 0. One-time capture + benign calibration
 
+Install the flow tool and fix its 0.5.0 arg-order bug (crashes otherwise):
+
+```bash
+cd /opt/netraverse
+.venv/bin/pip install cicflowmeter
+.venv/bin/python scripts/patch_cicflowmeter.py     # idempotent
+```
+
 Live capture needs raw-socket rights. Grant them once (sudo):
 
 ```bash
