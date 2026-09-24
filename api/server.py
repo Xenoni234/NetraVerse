@@ -32,7 +32,7 @@ if str(ROOT) not in sys.path:
 
 from src.data.windowing import apply_scaler
 from src.inference.engine import FEATURE_LABELS, load_forecaster, lead_time_seconds, explain_window
-from src.inference.live_state import recommended_action
+from src.inference.live_state import infer_behavioral_stage, recommended_action
 from src.response.firewall import ActionStore, ActionValidationError, NftablesExecutor
 from src.response.router_enforce import CompositeExecutor, RouterExecutor
 from src.decision.llm_advisor import advise as llm_advise, warmup as llm_warmup
@@ -1191,6 +1191,15 @@ def simulate_options(uid: str, host: str, window: str):
         match = baseline.loc[w == pd.to_datetime(cut, utc=True)]
         row = match.iloc[0] if len(match) else baseline.iloc[-1]
         stage_id = int(row.get(f"stage_k{primary}", 0) or 0)
+    # The 6-class stage head has no IMPACT class and often falls back to BENIGN on
+    # a genuine alert (e.g. DoS/DDoS). When that happens, infer a specific stage
+    # from the strong observed signature of the alert window (same fallback the
+    # live path uses) so the operator sees "IMPACT"/"RECON", not "BENIGN".
+    if stage_id == 0:
+        hf = _upload_host_frame(uid, host)
+        wr = hf.loc[pd.to_datetime(hf["window_start"], utc=True) == pd.to_datetime(cut, utc=True)]
+        if not wr.empty:
+            stage_id = int(infer_behavioral_stage(wr.iloc[0].to_dict())) or stage_id
     threshold = float(fc.threshold_for_horizon(primary))
     opts = rank_options(flows, host, stage_id, cut, fc, threshold=threshold,
                         horizon_col=risk_col, baseline_timeline=baseline)
