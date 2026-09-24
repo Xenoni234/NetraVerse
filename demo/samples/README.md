@@ -4,6 +4,24 @@ Upload any of these on the Simulate page. Each is a raw slice of a CIC-IDS2017
 TrafficLabelling day (original CICFlowMeter columns), keeping a benign lead-in
 before the labelled attack. Nothing is synthetic.
 
+## Recommended: Decision-Theater demo — `sample_ddos_multihost.csv`
+
+The best file for the **decision theater** (auto-pause → ranked options →
+accept → mitigated continuation → before/after). It is a multi-host slice of the
+Friday DDoS capture: the attacker `172.16.0.1` floods for ~20 min alongside four
+benign hosts (`192.168.10.3/.12/.15/.50`). Verified on the served
+`wm_sih_demo` checkpoint:
+
+- Attacker forecast peak risk **~0.95** (fires the alert; 33 forecast windows of
+  runway so the mitigated curve has room to settle).
+- Options are **differentiated by real simulated Δrisk**: *Block source IP* and
+  *Isolate host* → risk **0.95 → 0.00, attack prevented**; *Rate-limit* →
+  **0.95 → 0.96, not prevented** (throttling doesn't stop a flood — honest).
+
+The capture is minute-resolution; each minute's flows are spread across its 60 s
+(the flood's flows genuinely arrived throughout the minute) so the model sees the
+30 s windows it was trained on. No flows are added or removed.
+
 | File | Attack type | ATT&CK stage | Rows | Attack rows | Benign lead |
 |------|-------------|--------------|------|-------------|-------------|
 | `portscan_recon.csv` | Port scan | Reconnaissance | 80000 | 158930 | 1463 |
