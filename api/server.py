@@ -35,7 +35,7 @@ from src.inference.engine import FEATURE_LABELS, load_forecaster, lead_time_seco
 from src.inference.live_state import recommended_action
 from src.response.firewall import ActionStore, ActionValidationError, NftablesExecutor
 from src.response.router_enforce import CompositeExecutor, RouterExecutor
-from src.decision.llm_advisor import advise as llm_advise
+from src.decision.llm_advisor import advise as llm_advise, warmup as llm_warmup
 from src.explain.shap_wrapper import RiskExplainer
 from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIONS, stage_defence
 from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
@@ -83,6 +83,12 @@ _LIVE_ACTIONS = ActionStore(
         "100.81.46.8,100.72.80.52,192.168.0.203").split(",") if ip.strip()},
     executor=CompositeExecutor(NftablesExecutor(), RouterExecutor()),
 )
+
+
+@app.on_event("startup")
+def _warm_llm() -> None:
+    """Pre-load both LLM tiers into VRAM so the first recommendation is fast."""
+    threading.Thread(target=lambda: (llm_warmup() or None), daemon=True).start()
 
 
 def _forecaster():

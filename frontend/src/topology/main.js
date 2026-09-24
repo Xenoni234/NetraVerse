@@ -235,6 +235,7 @@ async function advise(ip) {
       <p>${esc(a.rationale || "")}</p>
       <div class="nv-rule">${esc(a.rule_preview || "")}  ·  TTL ${esc(a.ttl_seconds || 300)}s</div>
       ${(a.steps||[]).length ? "<ol>" + a.steps.map((s)=>`<li>${esc(s)}</li>`).join("") + "</ol>" : ""}
+      ${a.guard_note ? `<div class="nv-guard">${esc(a.guard_note)}</div>` : ""}
       <div class="nv-muted">Approve/execute controls arrive with the enforcement panel.</div>
     </div>`;
   } catch (e) {

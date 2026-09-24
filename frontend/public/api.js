@@ -13,7 +13,10 @@
   const queryApi = new URLSearchParams(window.location.search).get("api");
   let storedApi = "";
   try { storedApi = window.localStorage.getItem("nv_api_base") || ""; } catch {}
-  const defaultApi = window.location.hostname === "100.81.46.8" ? "http://100.72.80.52:8000" : "http://localhost:8000";
+  // Same-origin by default: the Vite dev server proxies /api to the sensor API,
+  // which avoids CORS / private-network blocks in the browser. Override with
+  // ?api=, localStorage nv_api_base, or window.NV_API_BASE.
+  const defaultApi = "";
   const BASE = (window.NV_API_BASE || queryApi || storedApi || defaultApi).replace(/\/$/, "");
   const route = document.body.dataset.route || "home";
   const store = {

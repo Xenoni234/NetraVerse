@@ -60,7 +60,8 @@ def _ollama_chat(model: str, system: str, user: str, *, url: str,
         "stream": False,
         "format": "json",
         "keep_alive": keep_alive,
-        "options": {"temperature": 0.2},
+        # Cap output length: the JSON reply is short, so this cuts latency a lot.
+        "options": {"temperature": 0.2, "num_predict": 320},
     }
     req = urllib.request.Request(
         f"{url}/api/chat",
@@ -150,9 +151,9 @@ def _validate(candidate: dict[str, Any], ctx: dict[str, Any], mgmt: set[str]) ->
     if action_type not in ACTION_TYPES:
         return None
     target_ip = str(candidate.get("target_ip") or ctx.get("source_ip") or ctx.get("host") or "").strip()
-    if target_ip in mgmt:
-        # Never cut our own access: downgrade to monitor-only.
-        return {"monitor_only": True}
+    # A management-IP target is still SHOWN (with the reasoning) but flagged so the
+    # UI marks it guarded; enforcement itself refuses it in the ActionStore.
+    mgmt_hit = target_ip in mgmt
     port = candidate.get("target_port")
     try:
         port = int(port) if port not in (None, "", "null") else None
@@ -163,7 +164,8 @@ def _validate(candidate: dict[str, Any], ctx: dict[str, Any], mgmt: set[str]) ->
     except (TypeError, ValueError):
         ttl = 300
     ttl = max(60, min(3600, ttl))
-    return {"action_type": action_type, "target_ip": target_ip, "target_port": port, "ttl_seconds": ttl}
+    return {"action_type": action_type, "target_ip": target_ip, "target_port": port,
+            "ttl_seconds": ttl, "management_guard": mgmt_hit}
 
 
 def advise(ctx: dict[str, Any], *, management_ips: set[str] | None = None) -> dict[str, Any]:
@@ -239,6 +241,8 @@ def advise(ctx: dict[str, Any], *, management_ips: set[str] | None = None) -> di
         "model_tier1": TIER1_MODEL,
         "model_tier2": TIER2_MODEL,
         "rule_preview": _rule_preview(valid),
+        "guard_note": ("Target is a protected management IP — the recommendation is shown, "
+                       "but enforcement is blocked by the safety guard.") if valid.get("management_guard") else None,
     }
 
 
