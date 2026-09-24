@@ -43,13 +43,15 @@ from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIO
 from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
     campaign_label, first_sustained, host_catalog, ingest_upload)
 
-# Serve wm_final: the only checkpoint that discriminates on real data.
-# wm_phase6 collapsed to a constant (val/test had zero positive onsets at the long
-# horizons -> threshold calibrated to 1.0, risk head always ~benign), so it returned
-# the same forecast for every host. Re-enable a phase6/long-horizon checkpoint here
-# ONLY once its calibration split contains real positive onsets. See metrics.json.
-_SIH_DEFAULT = ROOT / "models/wm_sih_demo/best.ckpt"
-CKPT = Path(os.environ.get("NETRAVERSE_CHECKPOINT", _SIH_DEFAULT if _SIH_DEFAULT.exists() else ROOT / "models/wm_final/best.ckpt"))
+# Serve wm_final: the checkpoint that actually discriminates on CIC-IDS data.
+# Its threshold (0.28, benign p99xmargin) cleanly separates benign hosts (~0.0002)
+# from attackers (~0.85). wm_sih_demo was calibrated for LAN traffic (threshold
+# 0.12) and mis-fires on dataset uploads (benign hosts forecast up to 0.96), so it
+# is only a fallback. The live LAN path overrides via NETRAVERSE_CHECKPOINT
+# (=models/wm_server/best.ckpt, threshold 0.0004). wm_phase6 collapsed to a constant
+# (val/test had zero positive onsets at long horizons) — do not serve it.
+_SIH_DEFAULT = ROOT / "models/wm_final/best.ckpt"
+CKPT = Path(os.environ.get("NETRAVERSE_CHECKPOINT", _SIH_DEFAULT if _SIH_DEFAULT.exists() else ROOT / "models/wm_sih_demo/best.ckpt"))
 BENCH = ROOT / "models/wm_final/benchmark.json"
 GENERALIZATION = ROOT / "models/wm_final/generalization.json"
 LIVE_PRED = ROOT / "reports/live/predictions.parquet"  # written by scripts/live_forecast.py
