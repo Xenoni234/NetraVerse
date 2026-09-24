@@ -101,6 +101,21 @@ def _forecaster():
     return _STATE["forecaster"]
 
 
+# The live/LAN path is calibrated differently from dataset uploads (thr 0.0004 vs
+# 0.28), so the live decision theater re-forecasts with the live checkpoint — the
+# same one nv-live serves — so its options match what the operator sees live.
+_LIVE_FLOWS_ENV = os.environ.get("NETRAVERSE_LIVE_FLOWS", "")
+LIVE_FLOWS = Path(_LIVE_FLOWS_ENV) if _LIVE_FLOWS_ENV else None
+LIVE_CKPT = Path(os.environ.get("NETRAVERSE_LIVE_CHECKPOINT", ROOT / "models/wm_server/best.ckpt"))
+
+
+def _live_forecaster():
+    if _STATE.get("live_forecaster") is None:
+        ckpt = LIVE_CKPT if LIVE_CKPT.exists() else CKPT
+        _STATE["live_forecaster"] = load_forecaster(str(ckpt), device="cpu")
+    return _STATE["live_forecaster"]
+
+
 def _gallery():
     if _STATE["gallery"] is None:
         cands = sorted((ROOT / "data/processed").glob("windows_cicids2017_all_+2018_+ctu13_*.parquet"),
@@ -569,6 +584,53 @@ def network_advise(host: str):
     actionable, cached = _cached_advise(str(host), entry)
     return _json_safe({"available": True, "host": str(host), "cached": cached,
                        "mode": _response_mode(), "actionable": actionable})
+
+
+@app.get("/api/live/options")
+def live_options(host: str, window: str | None = None):
+    """Ranked counterfactual containment options for a LIVE host under attack.
+
+    Same model-simulated Δrisk engine as the simulation theater, run on the live
+    capture with the live checkpoint. The operator accepts one and it is enforced
+    for REAL via /api/live/actions (nft + router); the live risk graph then falls
+    on the real subsequent windows.
+    """
+    if LIVE_FLOWS is None or not LIVE_FLOWS.exists():
+        return {"available": False, "host": host,
+                "note": "Live flow capture dir not configured (set NETRAVERSE_LIVE_FLOWS)."}
+    from src.data.windowing import WindowConfig, build_windows
+    from src.inference.live import load_live_flows
+    flows = load_live_flows(str(LIVE_FLOWS), campaign_id="live", max_files=400)
+    if flows.empty:
+        return {"available": False, "host": host, "note": "No live flows captured yet."}
+    fc = _live_forecaster()
+    primary = int(max(fc.horizons))
+    rc, sc = f"risk_k{primary}", f"stage_k{primary}"
+    thr = float(fc.threshold_for_horizon(primary))
+    win = build_windows(flows, WindowConfig(entity_granularity="src_ip"))
+    hw = win.loc[win["entity_id"].astype(str) == str(host)].sort_values("window_start")
+    if hw.empty:
+        return {"available": False, "host": host, "note": "No live windows for this host yet."}
+    tl = fc.forecast_host_timeline(hw, mc_samples=0)
+    if tl.empty:
+        return {"available": False, "host": host, "note": "Not enough history to forecast this host yet."}
+    if window:
+        cut = pd.Timestamp(window)
+    else:  # the current alert: latest window at/above threshold, else the newest window
+        crossed = tl.loc[tl[rc] >= thr, "window_start"]
+        cut = pd.Timestamp(crossed.iloc[-1] if len(crossed) else tl["window_start"].iloc[-1])
+    prow = tl.loc[tl[rc].idxmax()]
+    stage_id = int(prow.get(sc, 0) or 0)
+    if stage_id == 0:
+        beh = hw.apply(lambda r: infer_behavioral_stage(r.to_dict()), axis=1)
+        nz = beh[beh > 0]
+        if len(nz):
+            stage_id = int(nz.mode().iloc[0])
+    opts = rank_options(flows, str(host), stage_id, cut, fc, threshold=thr,
+                        horizon_col=rc, entity_granularity="src_ip")
+    return _json_safe({"available": True, "host": str(host), "window": str(cut),
+                       "stage": STAGE_UI.get(stage_id, str(stage_id)), "stage_id": stage_id,
+                       "threshold": thr, "mode": _response_mode(), "options": opts})
 
 
 def _advise_prewarm_loop() -> None:
