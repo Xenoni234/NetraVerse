@@ -1189,10 +1189,10 @@ def upload_overview(uid: str):
         prow = tl.loc[tl[rc].idxmax()]
         stage_id = int(prow.get(sc, 0) or 0)
         if stage_id == 0 and attacked:   # behavioral fallback for DoS/DDoS etc.
-            wr = hf.loc[pd.to_datetime(hf["window_start"], utc=True)
-                        == pd.to_datetime(prow["window_start"], utc=True)]
-            if not wr.empty:
-                stage_id = int(infer_behavioral_stage(wr.iloc[0].to_dict())) or 0
+            beh = hf.apply(lambda r: infer_behavioral_stage(r.to_dict()), axis=1)
+            nz = beh[beh > 0]
+            if len(nz):
+                stage_id = int(nz.mode().iloc[0])
         hosts.append({"host": str(ent), "peak_risk": round(peak, 4), "attacked": attacked,
                       "windows": int(len(tl)), "stage_id": stage_id,
                       "stage": STAGE_UI.get(stage_id, str(stage_id))})
