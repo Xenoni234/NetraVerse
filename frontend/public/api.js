@@ -1205,15 +1205,46 @@
     async function renderLiveTheater(host) {
       const box = document.getElementById("nv-live-theater");
       if (!box) return;
-      if (!host.alerting) { box.innerHTML = ""; return; }
+      const det = host.detector || {};
+      const detNow = Number(det.attack_now || 0);
+      const detectorAlerting = detNow >= 0.5;   // dual-engine: present-state attack
+      if (!host.alerting && !detectorAlerting) { box.innerHTML = ""; return; }
+      const detBanner = detectorAlerting
+        ? `<div class="nv-det-alert">🛑 <b>Detector: ${esc(det.stage_name || "attack")} in progress</b> — attack-now ${Math.round(detNow * 100)}% · <span class="nv-mono">${esc(det.signature || "")}</span>${host.alerting ? "" : ' · <span class="nv-muted">(forecaster shows no onset — attack arrived at full force, no runway to warn ahead)</span>'}</div>`
+        : "";
       let opt = liveOptionsCache[host.host];
       if (!opt) {
         box.innerHTML = `<div class="nv-theater"><span class="nv-muted">Simulating containment options through the world model…</span></div>`;
         opt = await api.get(`/api/live/options?host=${encodeURIComponent(host.host)}`).catch(() => null);
         if (opt) liveOptionsCache[host.host] = opt;
       }
-      if (!opt || !opt.available) { box.innerHTML = opt && opt.note ? `<div class="nv-theater"><span class="nv-muted">${esc(opt.note)}</span></div>` : ""; return; }
-      box.innerHTML = `<div class="nv-theater">
+      const enforceLive = async (action_type, target_ip, label, btn) => {
+        const token = getToken() || window.prompt("Enter the live operator token:");
+        if (!token) return; saveToken(token);
+        btn.disabled = true; btn.textContent = "Previewing…";
+        try {
+          const p = await api.post("/api/live/actions/preview", { alert_id: host.event_id || `live-${host.host}`, host: host.host, action_type, target_ip: target_ip || host.host, target_port: null, ttl_seconds: 300, reason: `Containment: ${label}`, mode: "enforce" }, token);
+          const line = h(`<div class="nv-theater accepted" style="margin-top:8px"><b>Preview:</b> <span class="nv-mono">${esc(p.rule)}</span> · ${p.dry_run ? "dry-run" : "will enforce"} · expires ${esc(hhmmss(p.expires_at))} IST <button class="nv-btn" data-approve="1">Approve &amp; enforce</button></div>`);
+          box.appendChild(line);
+          line.querySelector("[data-approve]").addEventListener("click", async (ev) => {
+            try { await api.post(`/api/live/actions/${encodeURIComponent(p.preview_id)}/approve`, {}, token); ev.target.textContent = "✓ Enforced — the attack traffic should stop"; ev.target.disabled = true; liveOptionsCache = {}; }
+            catch (e) { ev.target.insertAdjacentHTML("afterend", `<span class="nv-err"> ${esc(e.message)}</span>`); }
+          });
+        } catch (e) { btn.disabled = false; btn.textContent = "Enforce (real) →"; box.insertAdjacentHTML("beforeend", `<p class="nv-err">${esc(e.message)}</p>`); }
+      };
+      // Detector caught an in-progress attack but the forecaster's counterfactual
+      // (which needs a benign->attack ramp) is unavailable: offer a direct block.
+      if (!opt || !opt.available) {
+        box.innerHTML = `<div class="nv-theater">${detBanner}
+          <p class="nv-note" style="margin:6px 0 10px">Ongoing attack caught by the present-state detector. Enforce containment directly:</p>
+          <div class="nv-theater-opts">
+            <div class="nv-opt rec"><div class="nv-opt-head"><b>Block the source IP</b><span class="nv-badge elevated">RECOMMENDED</span></div><p class="nv-opt-ex">Drop all traffic from ${esc(host.host)} — stops the ${esc(det.stage_name || "attack")} immediately.</p><button class="nv-btn" data-block="block_source_ip">Enforce (real) →</button></div>
+            <div class="nv-opt"><div class="nv-opt-head"><b>Isolate the host</b></div><p class="nv-opt-ex">Quarantine ${esc(host.host)} from the network.</p><button class="nv-btn" data-block="isolate_host">Enforce (real) →</button></div>
+          </div></div>`;
+        box.querySelectorAll("[data-block]").forEach((b) => b.addEventListener("click", () => enforceLive(b.dataset.block, host.host, b.dataset.block, b)));
+        return;
+      }
+      box.innerHTML = `<div class="nv-theater">${detBanner}
         <div class="nv-theater-head">⚠ <b>Attack forecast — ${esc(opt.stage)}</b> · model-simulated containment options · <span class="nv-badge critical">REAL ENFORCEMENT</span></div>
         <p class="nv-note" style="margin:6px 0 12px">Each option's projected Δrisk is the world model run as if that action were applied. Accepting enforces a real nft/router rule (operator-approved, TTL auto-rollback); the live risk graph then falls on the next windows.</p>
         <div class="nv-theater-opts">${opt.options.map((o, i) => `
@@ -1224,21 +1255,7 @@
             <button class="nv-btn" data-live-opt="${i}">Enforce (real) →</button>
           </div>`).join("")}</div>
       </div>`;
-      box.querySelectorAll("[data-live-opt]").forEach((b) => b.addEventListener("click", async () => {
-        const o = opt.options[Number(b.dataset.liveOpt)];
-        const token = getToken() || window.prompt("Enter the live operator token:");
-        if (!token) return; saveToken(token);
-        b.disabled = true; b.textContent = "Previewing…";
-        try {
-          const p = await api.post("/api/live/actions/preview", { alert_id: host.event_id || `live-${host.host}`, host: host.host, action_type: o.action_type, target_ip: o.target_ip || host.host, target_port: o.target_port || null, ttl_seconds: o.ttl_seconds || 300, reason: `Counterfactual option: ${o.label}`, mode: "enforce" }, token);
-          const line = h(`<div class="nv-theater accepted" style="margin-top:8px"><b>Preview:</b> <span class="nv-mono">${esc(p.rule)}</span> · ${p.dry_run ? "dry-run" : "will enforce"} · expires ${esc(hhmmss(p.expires_at))} IST <button class="nv-btn" data-live-approve="1">Approve & enforce</button></div>`);
-          box.appendChild(line);
-          line.querySelector("[data-live-approve]").addEventListener("click", async (ev) => {
-            try { await api.post(`/api/live/actions/${encodeURIComponent(p.preview_id)}/approve`, {}, token); ev.target.textContent = "✓ Enforced — watch the risk fall"; ev.target.disabled = true; liveOptionsCache = {}; }
-            catch (e) { ev.target.insertAdjacentHTML("afterend", `<span class="nv-err"> ${esc(e.message)}</span>`); }
-          });
-        } catch (e) { b.disabled = false; b.textContent = "Enforce (real) →"; box.insertAdjacentHTML("beforeend", `<p class="nv-err">${esc(e.message)}</p>`); }
-      }));
+      box.querySelectorAll("[data-live-opt]").forEach((b) => b.addEventListener("click", () => { const o = opt.options[Number(b.dataset.liveOpt)]; enforceLive(o.action_type, o.target_ip, o.label, b); }));
     }
     const actionOptions = (selected) => `${selected ? "" : "<option value=\"\" selected disabled>No actionable recommendation</option>"}${["block_attack_port", "block_source_ip", "block_destination_ip", "rate_limit", "restrict_east_west", "isolate_host"].map((x) => `<option value="${x}" ${x === selected ? "selected" : ""}>${x}</option>`).join("")}`;
     const actionRows = (items) => !items?.length ? `<div class="nv-empty">No response actions recorded.</div>` : `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Status</th><th>Mode</th><th></th></tr></thead><tbody>${items.slice(0, 20).map((a) => `<tr><td class="nv-mono">${esc(hhmmss(a.created_at))}</td><td>${esc(a.action_type)}</td><td class="nv-mono">${esc(a.target_ip)}${a.target_port ? `:${esc(a.target_port)}` : ""}</td><td>${esc(a.status)}</td><td>${a.dry_run ? "dry-run" : "enforced"}</td><td>${a.rollback_available ? `<button class="nv-btn sec nv-rollback" data-action-id="${esc(a.action_id)}">Rollback</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
@@ -1276,7 +1293,7 @@
       const hostEvents = hostEventItems.slice(-10).reverse().map((e) => `<tr><td class="nv-mono">${esc(hhmmss(e.issued_at))}</td><td>${esc(e.forecast_state)}</td><td>${esc((e.crossed_horizons || []).join(", ") || "none")}</td><td class="nv-mono">${esc(e.event_id)}</td></tr>`).join("") || `<tr><td colspan="4">No forecast events for this host.</td></tr>`;
       content.innerHTML = card("", `<div class="nv-grid">${metric("Live hosts", num(data.n_hosts))}${metric("Alerting now", num(alerting), { cls: alerting ? "alert" : "" })}${metric("Feed freshness", `<small>${esc(fresh)}</small>`, { cls: stale ? "alert" : "ok" })}${metric("Pipeline", `<small>${esc(stale ? "STALE" : "LIVE")}</small>`, { cls: stale ? "alert" : "ok" })}${metric("Response mode", `<small>${esc(data.mode || "dry_run")}</small>`)}</div>`) +
         section("Live per-host forecasts", "Streaming from the monitored server", "Click a host to inspect the forecast and response controls.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Host</th><th>Last window</th>${horizons.map((hz) => `<th class="num">${esc(hz)}</th>`).join("")}<th class="num">Peak</th><th>Stage</th><th>State</th></tr></thead><tbody>${hostRows}</tbody></table></div>`) +
-        section("Focused host", `${host.host} · ${host.forecast_state}`, "Forecast state is advisory; network traffic alone does not prove compromise.", `<div class="nv-grid">${horizons.map((hz) => metric(`${hz} risk`, pct(host.risk?.[hz]), { cls: (host.risk?.[hz] || 0) >= data.threshold ? "alert" : "" })).join("")}${metric("Confidence", host.confidence == null ? "n/a" : pct(host.confidence))}${metric("Resolution", `${data.measurement_resolution_seconds || 30}s`)}</div><p class="nv-note">${host.forecast_state === "EARLY_WARNING" ? "Early warning: review evidence before containment." : host.forecast_state === "CONFIRMED_ALERT" ? "Confirmed forecast state: a human decision is required before containment." : "No calibrated forecast threshold is currently crossed."}</p>`) +
+        section("Focused host", `${host.host} · ${host.forecast_state}`, "Forecast state is advisory; network traffic alone does not prove compromise.", `<div class="nv-grid">${horizons.map((hz) => metric(`${hz} risk`, pct(host.risk?.[hz]), { cls: (host.risk?.[hz] || 0) >= data.threshold ? "alert" : "" })).join("")}${metric("Detector (now)", host.detector ? `${Math.round(Number(host.detector.attack_now || 0) * 100)}%` : "n/a", { cls: Number(host.detector?.attack_now || 0) >= 0.5 ? "alert" : "" })}${metric("Confidence", host.confidence == null ? "n/a" : pct(host.confidence))}${metric("Resolution", `${data.measurement_resolution_seconds || 30}s`)}</div><p class="nv-note">Dual-engine: the <b>forecaster</b> warns of an attack <i>beginning</i> (needs a benign→attack ramp — headline lead time), while the <b>detector</b> flags an attack <i>in progress now</i> (${host.detector?.signature ? esc(host.detector.signature) : "no strong signature"}). ${host.forecast_state === "EARLY_WARNING" ? "Early warning: review evidence before containment." : host.forecast_state === "CONFIRMED_ALERT" ? "Confirmed forecast state: a human decision is required before containment." : "No calibrated forecast threshold is currently crossed."}</p>`) +
         section("Risk timeline", "Observed forecast history", "Each row is a completed 30-second observation window; bars show the model risk available at that origin.", `<div class="nv-live-timeline-head"><span>window</span>${horizons.map((hz) => `<span>${esc(hz)}</span>`).join("")}</div><div class="nv-live-timeline">${timelineRows}</div>`) +
         section("Forecast evidence", "Top observed drivers", "Robust-scaled observations from the current window; these are evidence signals, not causal attributions.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Feature</th><th>Model field</th><th class="num">Observed</th><th class="num">Deviation</th></tr></thead><tbody>${driverRows || `<tr><td colspan="4">No driver data available.</td></tr>`}</tbody></table></div>`) +
         section("Live recommendation", recommendationIsCurrent ? "Recommended action now" : recommendation.action_type ? "Last alert recommendation" : "Monitor only", recommendationIsCurrent ? "Generated from the current forecast; approval is required and nothing is applied automatically." : recommendation.action_type ? "The alert has cleared. This recommendation is retained for audit and is read-only until a new alert is active." : "No containment action is recommended while the current forecast is below the calibrated alert threshold.", `<div class="nv-recommendation"><div><b>${esc(recommendation.label || recommendation.action_type)}</b><span class="nv-badge ${recommendationIsCurrent ? "elevated" : recommendation.action_type ? "observed" : "benign"}">${recommendationIsCurrent ? "REVIEW REQUIRED" : recommendation.action_type ? "HISTORICAL" : "MONITOR"}</span></div><p>${esc(recommendation.rationale || "")}</p>${recommendation.action_type ? `<p class="nv-note">Target: <span class="nv-mono">${esc(recommendationTarget)}${recommendationTargetPort ? `:${esc(recommendationTargetPort)}` : ""}</span> · TTL: ${esc(recommendation.ttl_seconds || 300)}s${recommendation.target_port_note ? ` · ${esc(recommendation.target_port_note)}` : ""}</p>` : ""}</div>`) +

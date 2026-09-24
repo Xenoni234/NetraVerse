@@ -476,3 +476,6 @@ table.nv tbody tr:hover { background: var(--nv-subtle); }
 .nv-node-tag{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--nv-muted)}
 .nv-node.attacked .nv-node-tag{color:var(--nv-bad);font-weight:600}
 .nv-node.contained .nv-node-tag{color:var(--nv-good);font-weight:600}
+/* ---- Live detector alert banner ---- */
+.nv-det-alert{padding:10px 12px;margin-bottom:10px;border:1px solid var(--nv-bad-line);border-left:3px solid var(--nv-bad);background:var(--nv-bad-wash);border-radius:6px;font-size:13px;color:var(--nv-ink)}
+.nv-det-alert .nv-mono{font-size:12px;color:var(--nv-ink-2)}
