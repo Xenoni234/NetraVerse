@@ -1214,7 +1214,7 @@ def simulate_apply(payload: dict):
     mit = mitigated_timeline(flows, host, action_type, cut, fc, target_ip=target_ip,
                              target_port=payload.get("target_port"))
     cmp = compare_timelines(baseline, mit, threshold=float(fc.threshold_for_horizon(primary)),
-                            horizon_col=risk_col)
+                            cut_ts=cut, horizon_col=risk_col)
     cmp.update({"upload_id": uid, "host": host, "action_type": action_type,
                 "target_ip": target_ip, "cut_window": window})
     return _json_safe(cmp)

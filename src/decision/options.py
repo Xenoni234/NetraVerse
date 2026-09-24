@@ -81,7 +81,8 @@ def rank_options(
             flows, host, action_type, cut_ts, fc, target_ip=target,
             entity_granularity=entity_granularity,
         )
-        cmp = compare_timelines(baseline_timeline, mit, threshold=threshold, horizon_col=horizon_col)
+        cmp = compare_timelines(baseline_timeline, mit, threshold=threshold,
+                                cut_ts=cut_ts, horizon_col=horizon_col)
         options.append({
             "action_type": action_type,
             "label": _ACTION_LABEL.get(action_type, action_type.replace("_", " ")),

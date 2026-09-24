@@ -106,12 +106,17 @@ def compare_timelines(
     mitigated: pd.DataFrame,
     *,
     threshold: float,
+    cut_ts: "pd.Timestamp | None" = None,
     horizon_col: str = "risk_k4",
 ) -> dict[str, Any]:
-    """Align baseline vs mitigated risk by window and summarize the impact.
+    """Align baseline vs mitigated risk by window and summarize the FUTURE impact.
 
-    Returns per-window arrays plus whether the attack was prevented (mitigated
-    peak stays below threshold) and the peak-risk before/after.
+    Containment starts at ``cut_ts``: windows *before* it are unchanged history;
+    windows *at/after* it carry the mitigated risk (~0 when the attacker is fully
+    contained and thus has no remaining windows). "Prevented" and the peak
+    before/after are measured over the **post-cut** windows only — the pre-cut
+    peak already happened and can't be undone, so including it would hide the
+    prevention.
     """
     def _series(df: pd.DataFrame) -> dict[str, float]:
         if df is None or df.empty or horizon_col not in df:
@@ -122,11 +127,22 @@ def compare_timelines(
     base = _series(baseline)
     mit = _series(mitigated)
     windows = sorted(set(base) | set(mit))
-    baseline_arr = [{"window_start": w, "risk": round(base.get(w, 0.0), 6)} for w in windows]
-    # A fully-contained host has no mitigated rows -> risk drops to ~0 after the cut.
-    mitigated_arr = [{"window_start": w, "risk": round(mit.get(w, 0.0), 6)} for w in windows]
-    peak_before = round(max(base.values(), default=0.0), 6)
-    peak_after = round(max(mit.values(), default=0.0), 6)
+    cut = pd.Timestamp(cut_ts) if cut_ts is not None else None
+
+    baseline_arr, mitigated_arr = [], []
+    post_base, post_mit = [], []
+    for w in windows:
+        b = base.get(w, 0.0)
+        is_post = cut is None or pd.Timestamp(w) >= cut
+        m = mit.get(w, 0.0) if is_post else b  # unchanged history before the cut
+        baseline_arr.append({"window_start": w, "risk": round(b, 6)})
+        mitigated_arr.append({"window_start": w, "risk": round(m, 6)})
+        if is_post:
+            post_base.append(b)
+            post_mit.append(m)
+
+    peak_before = round(max(post_base, default=0.0), 6)   # what the attack WOULD reach
+    peak_after = round(max(post_mit, default=0.0), 6)      # what happens with the action
     return {
         "baseline": baseline_arr,
         "mitigated": mitigated_arr,
@@ -135,6 +151,7 @@ def compare_timelines(
         "risk_drop": round(max(0.0, peak_before - peak_after), 6),
         "prevented": bool(peak_after < float(threshold)),
         "threshold": round(float(threshold), 6),
+        "cut_window": None if cut is None else str(cut),
         "horizon": horizon_col,
     }
 
