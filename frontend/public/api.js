@@ -1201,6 +1201,45 @@
     const saveToken = (v) => { try { sessionStorage.setItem(tokenKey, v); } catch {} };
     let selectedHost = null;
     let latest = null;
+    let liveOptionsCache = {};   // host -> ranked counterfactual options (refreshed on enforce)
+    async function renderLiveTheater(host) {
+      const box = document.getElementById("nv-live-theater");
+      if (!box) return;
+      if (!host.alerting) { box.innerHTML = ""; return; }
+      let opt = liveOptionsCache[host.host];
+      if (!opt) {
+        box.innerHTML = `<div class="nv-theater"><span class="nv-muted">Simulating containment options through the world model…</span></div>`;
+        opt = await api.get(`/api/live/options?host=${encodeURIComponent(host.host)}`).catch(() => null);
+        if (opt) liveOptionsCache[host.host] = opt;
+      }
+      if (!opt || !opt.available) { box.innerHTML = opt && opt.note ? `<div class="nv-theater"><span class="nv-muted">${esc(opt.note)}</span></div>` : ""; return; }
+      box.innerHTML = `<div class="nv-theater">
+        <div class="nv-theater-head">⚠ <b>Attack forecast — ${esc(opt.stage)}</b> · model-simulated containment options · <span class="nv-badge critical">REAL ENFORCEMENT</span></div>
+        <p class="nv-note" style="margin:6px 0 12px">Each option's projected Δrisk is the world model run as if that action were applied. Accepting enforces a real nft/router rule (operator-approved, TTL auto-rollback); the live risk graph then falls on the next windows.</p>
+        <div class="nv-theater-opts">${opt.options.map((o, i) => `
+          <div class="nv-opt${o.recommended ? " rec" : ""}">
+            <div class="nv-opt-head"><b>${esc(o.label)}</b>${o.recommended ? '<span class="nv-badge elevated">RECOMMENDED</span>' : ""}</div>
+            <p class="nv-opt-ex">${esc(o.explanation)}</p>
+            <div class="nv-opt-impact">projected risk drop <b>${Math.round((o.expected_risk_drop || 0) * 100)}%</b> · ${o.prevented ? '<span class="nv-opt-yes">contains the attack</span>' : '<span class="nv-opt-no">reduces but not fully</span>'}</div>
+            <button class="nv-btn" data-live-opt="${i}">Enforce (real) →</button>
+          </div>`).join("")}</div>
+      </div>`;
+      box.querySelectorAll("[data-live-opt]").forEach((b) => b.addEventListener("click", async () => {
+        const o = opt.options[Number(b.dataset.liveOpt)];
+        const token = getToken() || window.prompt("Enter the live operator token:");
+        if (!token) return; saveToken(token);
+        b.disabled = true; b.textContent = "Previewing…";
+        try {
+          const p = await api.post("/api/live/actions/preview", { alert_id: host.event_id || `live-${host.host}`, host: host.host, action_type: o.action_type, target_ip: o.target_ip || host.host, target_port: o.target_port || null, ttl_seconds: o.ttl_seconds || 300, reason: `Counterfactual option: ${o.label}`, mode: "enforce" }, token);
+          const line = h(`<div class="nv-theater accepted" style="margin-top:8px"><b>Preview:</b> <span class="nv-mono">${esc(p.rule)}</span> · ${p.dry_run ? "dry-run" : "will enforce"} · expires ${esc(hhmmss(p.expires_at))} IST <button class="nv-btn" data-live-approve="1">Approve & enforce</button></div>`);
+          box.appendChild(line);
+          line.querySelector("[data-live-approve]").addEventListener("click", async (ev) => {
+            try { await api.post(`/api/live/actions/${encodeURIComponent(p.preview_id)}/approve`, {}, token); ev.target.textContent = "✓ Enforced — watch the risk fall"; ev.target.disabled = true; liveOptionsCache = {}; }
+            catch (e) { ev.target.insertAdjacentHTML("afterend", `<span class="nv-err"> ${esc(e.message)}</span>`); }
+          });
+        } catch (e) { b.disabled = false; b.textContent = "Enforce (real) →"; box.insertAdjacentHTML("beforeend", `<p class="nv-err">${esc(e.message)}</p>`); }
+      }));
+    }
     const actionOptions = (selected) => `${selected ? "" : "<option value=\"\" selected disabled>No actionable recommendation</option>"}${["block_attack_port", "block_source_ip", "block_destination_ip", "rate_limit", "restrict_east_west", "isolate_host"].map((x) => `<option value="${x}" ${x === selected ? "selected" : ""}>${x}</option>`).join("")}`;
     const actionRows = (items) => !items?.length ? `<div class="nv-empty">No response actions recorded.</div>` : `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Status</th><th>Mode</th><th></th></tr></thead><tbody>${items.slice(0, 20).map((a) => `<tr><td class="nv-mono">${esc(hhmmss(a.created_at))}</td><td>${esc(a.action_type)}</td><td class="nv-mono">${esc(a.target_ip)}${a.target_port ? `:${esc(a.target_port)}` : ""}</td><td>${esc(a.status)}</td><td>${a.dry_run ? "dry-run" : "enforced"}</td><td>${a.rollback_available ? `<button class="nv-btn sec nv-rollback" data-action-id="${esc(a.action_id)}">Rollback</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
     const telemetryPanel = section("Telemetry readiness", "Connected evidence sources", "The live page polls the server-side capture and inference pipeline; it does not sniff traffic in the browser.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Source</th><th>Status</th><th>Identity</th><th>Timestamp</th></tr></thead><tbody>${(telemetry.sources || []).map((s) => `<tr><td>${esc(s.name)}</td><td>${stageBadge(s.status === "active" ? "ACTIVE" : "NOT CONNECTED")}</td><td>${esc(s.identity)}</td><td>${s.timestamp ? "yes" : "no"}</td></tr>`).join("")}</tbody></table></div>`);
@@ -1241,10 +1280,12 @@
         section("Risk timeline", "Observed forecast history", "Each row is a completed 30-second observation window; bars show the model risk available at that origin.", `<div class="nv-live-timeline-head"><span>window</span>${horizons.map((hz) => `<span>${esc(hz)}</span>`).join("")}</div><div class="nv-live-timeline">${timelineRows}</div>`) +
         section("Forecast evidence", "Top observed drivers", "Robust-scaled observations from the current window; these are evidence signals, not causal attributions.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Feature</th><th>Model field</th><th class="num">Observed</th><th class="num">Deviation</th></tr></thead><tbody>${driverRows || `<tr><td colspan="4">No driver data available.</td></tr>`}</tbody></table></div>`) +
         section("Live recommendation", recommendationIsCurrent ? "Recommended action now" : recommendation.action_type ? "Last alert recommendation" : "Monitor only", recommendationIsCurrent ? "Generated from the current forecast; approval is required and nothing is applied automatically." : recommendation.action_type ? "The alert has cleared. This recommendation is retained for audit and is read-only until a new alert is active." : "No containment action is recommended while the current forecast is below the calibrated alert threshold.", `<div class="nv-recommendation"><div><b>${esc(recommendation.label || recommendation.action_type)}</b><span class="nv-badge ${recommendationIsCurrent ? "elevated" : recommendation.action_type ? "observed" : "benign"}">${recommendationIsCurrent ? "REVIEW REQUIRED" : recommendation.action_type ? "HISTORICAL" : "MONITOR"}</span></div><p>${esc(recommendation.rationale || "")}</p>${recommendation.action_type ? `<p class="nv-note">Target: <span class="nv-mono">${esc(recommendationTarget)}${recommendationTargetPort ? `:${esc(recommendationTargetPort)}` : ""}</span> · TTL: ${esc(recommendation.ttl_seconds || 300)}s${recommendation.target_port_note ? ` · ${esc(recommendation.target_port_note)}` : ""}</p>` : ""}</div>`) +
+        section("Live decision theater", "Model-simulated options for the alerting host", "When a host is under forecast attack, each containment option is simulated through the world model and can be enforced for real.", `<div id="nv-live-theater"></div>`) +
         section("Human-in-the-loop response", "Preview a defensive action", "The form is populated from the current recommendation. Dry-run is the default; preview shows the exact target, rule and TTL before approval.", `<div class="nv-live-action-form"><label>Operator token <input id="nv-op-token" type="password" placeholder="required for approval" value="${esc(getToken())}"></label><label>Action <select id="nv-action-type">${actionOptions(stageAction)}</select></label><label>Target IP <input id="nv-action-ip" value="${esc(recommendationTarget)}"></label><label>Port <input id="nv-action-port" type="number" min="1" max="65535" value="${esc(recommendationTargetPort)}"></label><label>TTL seconds <input id="nv-action-ttl" type="number" min="1" max="3600" value="${esc(recommendation.ttl_seconds || 300)}"></label><label>Mode <select id="nv-action-mode"><option value="dry_run">dry-run</option><option value="enforce">enforce if server allows</option></select></label><button class="nv-btn" id="nv-action-preview" ${stale || !recommendationIsCurrent ? "disabled" : ""}>Preview response</button>${stale ? `<span class="nv-caveat">Feed is stale; response controls are disabled.</span>` : !recommendationIsCurrent ? `<span class="nv-caveat">${recommendation.action_type ? "Approval is enabled only while this host is currently alerting." : "No actionable recommendation was generated by the live forecast."}</span>` : ""}</div><div id="nv-action-preview-result"></div>`) +
         section("Forecast event log", "State transitions", "Events written by the server-side live loop.", `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Time</th><th>State</th><th>Crossed horizons</th><th>Event</th></tr></thead><tbody>${hostEvents}</tbody></table></div>`) +
         section("Response audit", "Approved actions", "Every action is operator-approved, TTL-bound and reversible.", actionRows(data.actions)) + telemetryPanel;
       content.querySelectorAll("[data-live-host]").forEach((row) => row.addEventListener("click", () => { selectedHost = row.dataset.liveHost; tick(); }));
+      renderLiveTheater(host);
       const tokenInput = content.querySelector("#nv-op-token");
       if (tokenInput) tokenInput.addEventListener("change", () => saveToken(tokenInput.value));
       const preview = content.querySelector("#nv-action-preview");
