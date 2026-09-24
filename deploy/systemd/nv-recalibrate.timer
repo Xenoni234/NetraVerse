@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NetraVerse threshold recalibration weekly (agent self-tuning)
+
+[Timer]
+# Every 7 days; Persistent catches up a missed run after downtime.
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

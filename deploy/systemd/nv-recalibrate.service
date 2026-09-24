@@ -1,0 +1,15 @@
+[Unit]
+Description=NetraVerse autonomous threshold recalibration (weekly, benign-baseline)
+# Runs scripts/auto_recalibrate.py: re-derives the alert threshold from recent
+# benign traffic and restarts the live services. Aborts if a host is alerting.
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/netraverse
+Environment=PYTHONUNBUFFERED=1
+# Point --flows at the benign live-capture directory the agent writes.
+ExecStart=/opt/netraverse/.venv/bin/python scripts/auto_recalibrate.py \
+    --flows %h/nv_flows_benign \
+    --entity-granularity dst_ip --target-host 100.72.80.52 \
+    --safety-margin 2.0 --min-rows 200 \
+    --restart-units nv-live nv-api
