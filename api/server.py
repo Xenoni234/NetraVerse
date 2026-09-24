@@ -1162,6 +1162,46 @@ def upload_forecast(uid: str, host: str, mc: int = 0):
     return payload
 
 
+@app.get("/api/upload/{uid}/overview")
+def upload_overview(uid: str):
+    """Forecast EVERY eligible host in the upload — the multi-host topology feed.
+
+    Returns each host's peak risk, whether it raises a sustained alert (attacked),
+    its stage, and window count, sorted attacked-first. Lightweight (mc=0) so the
+    whole network can be scored at once.
+    """
+    record = _UPLOADS.get(uid)
+    if record is None:
+        raise HTTPException(404, "Unknown upload id (session expired).")
+    frame = record["frame"]
+    fc = _forecaster()
+    primary = int(max(fc.horizons))
+    rc, sc = f"risk_k{primary}", f"stage_k{primary}"
+    thr = float(fc.threshold_for_horizon(primary))
+    hosts = []
+    for ent, hf in frame.groupby(frame["entity_id"].astype(str)):
+        tl = fc.forecast_host_timeline(hf.sort_values("window_start"), mc_samples=0)
+        if tl.empty:
+            continue
+        risks = tl[rc].to_numpy(dtype=float)
+        peak = float(risks.max())
+        attacked = bool(len(risks) > 1 and ((risks[1:] >= thr) & (risks[:-1] >= thr)).any())
+        prow = tl.loc[tl[rc].idxmax()]
+        stage_id = int(prow.get(sc, 0) or 0)
+        if stage_id == 0 and attacked:   # behavioral fallback for DoS/DDoS etc.
+            wr = hf.loc[pd.to_datetime(hf["window_start"], utc=True)
+                        == pd.to_datetime(prow["window_start"], utc=True)]
+            if not wr.empty:
+                stage_id = int(infer_behavioral_stage(wr.iloc[0].to_dict())) or 0
+        hosts.append({"host": str(ent), "peak_risk": round(peak, 4), "attacked": attacked,
+                      "windows": int(len(tl)), "stage_id": stage_id,
+                      "stage": STAGE_UI.get(stage_id, str(stage_id))})
+    hosts.sort(key=lambda x: (not x["attacked"], -x["peak_risk"]))
+    return _json_safe({"upload_id": uid, "threshold": round(thr, 6),
+                       "n_hosts": len(hosts), "n_attacked": sum(h["attacked"] for h in hosts),
+                       "hosts": hosts})
+
+
 @app.get("/api/upload/{uid}/explain")
 def upload_explain(uid: str, host: str, window: str):
     return _explain_host(_upload_host_frame(uid, host), window)

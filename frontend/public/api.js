@@ -660,6 +660,10 @@
         try {
           const applied = await api.post("/api/simulate/apply", { upload_id: d.upload_id, host: d.scenario.host, action_type: o.action_type, target_ip: o.target_ip, cut_window: cur.t });
           decisionState.applied = { option: o, cmp: applied, cutStep: stp };
+          // Record for the multi-host tally so the network overview marks this host contained.
+          store.simDecisions = store.simDecisions || {};
+          store.simDecisions[d.scenario.host] = { option: o, cmp: applied };
+          if (d.onDecisionApplied) d.onDecisionApplied();
           if (replayMount.__nvReplay) replayMount.__nvReplay.applyMitigation(stp, applied.mitigated);
           box.innerHTML = `<div class="nv-theater accepted"><b>✓ ${esc(o.label)} applied.</b> ${applied.prevented ? 'Continuing on the mitigated forecast — <span class="nv-opt-yes">attack prevented</span>.' : "Risk reduced; continuing."}</div>`;
           if (replayMount.__nvReplay) replayMount.__nvReplay.resume();
@@ -989,6 +993,28 @@
         <a class="nv-btn sec" href="/validate">Validate</a><a class="nv-btn sec" href="/model">Model</a></div>`);
   }
 
+  function simNetOverview(ov, selected, decisions) {
+    decisions = decisions || {};
+    const contained = ov.hosts.filter((hh) => decisions[hh.host]).length;
+    const node = (hh) => {
+      const dec = decisions[hh.host];
+      const cls = dec ? "contained" : hh.attacked ? "attacked" : "benign";
+      const sel = hh.host === selected ? " sel" : "";
+      const label = dec ? "✓ contained" : hh.attacked ? esc(hh.stage) : "benign";
+      return `<button class="nv-node ${cls}${sel}" data-host="${esc(hh.host)}" title="${esc(hh.host)} · peak risk ${pct(hh.peak_risk)}">
+        <span class="nv-node-ip">${esc(hh.host)}</span>
+        <span class="nv-node-bar"><i style="width:${Math.round(Math.min(1, hh.peak_risk) * 100)}%"></i></span>
+        <span class="nv-node-tag">${label}</span>
+      </button>`;
+    };
+    return `<div class="nv-card nv-net">
+      <div class="nv-net-head"><b>Uploaded network</b> · ${ov.n_hosts} host${ov.n_hosts === 1 ? "" : "s"} forecast ·
+        <span style="color:var(--nv-bad)">${ov.n_attacked} under forecast attack</span>${contained ? ` · <span style="color:var(--nv-good)">${contained} contained</span>` : ""}</div>
+      <div class="nv-net-grid">${ov.hosts.map(node).join("")}</div>
+      <p class="nv-note" style="margin-bottom:0">Every host is forecast. Attacked hosts are highlighted red — click one to open its decision theater; accept a decision to contain it (turns green).</p>
+    </div>`;
+  }
+
   async function simulatePage(content) {
     setCtx({ scenario: "Upload / replay", host: "—", horizon: "+120s", mode: "Ingest", data: "User capture" });
     const stepCard = (n, t, s, active) => `<div class="nv-step ${active ? "focus" : ""}" style="flex:1 1 130px"><div class="hz">${n}</div><div class="st" style="font-size:12px">${esc(t)}</div><div class="meta">${esc(s)}</div></div>`;
@@ -1022,12 +1048,31 @@
           stagesEl.appendChild(row); await new Promise((r) => setTimeout(r, 220));
           row.querySelector(".nv-dot").classList.replace("run", "done");
         }
-        const host = res.hosts[0];
-        const fc = await api.get(`/api/upload/${res.upload_id}/forecast?host=${encodeURIComponent(host)}&mc=20`);
-        store.sel = { campaign: "upload", host, upload_id: res.upload_id, ground_truth: Boolean(fc.ground_truth) };
-        const rb = h(`<div id="nv-content"></div>`); resultEl.appendChild(rb);
-        forecastPage(rb, { ...fc, upload_id: res.upload_id, scenario: fc.scenario || { host, label: "Uploaded capture" } });
-        resultEl.insertBefore(h(`<p class="nv-note">This capture now drives <a href="/forecast">Forecast</a>, <a href="/network">Network</a>, <a href="/attack">ATT&CK</a> and <a href="/investigate">Investigate</a>.</p>`), rb);
+        // Forecast EVERY host so the uploaded network renders as a topology with
+        // the attacked hosts highlighted (Phase S2); pick a host to open its theater.
+        const overview = await api.get(`/api/upload/${res.upload_id}/overview`).catch(() => null);
+        store.simDecisions = {};
+        resultEl.innerHTML = `<div id="nv-net-overview"></div><div id="nv-host-theater"></div>`;
+        const overviewEl = resultEl.querySelector("#nv-net-overview");
+        const theaterEl = resultEl.querySelector("#nv-host-theater");
+        let selectedHost = null;
+        const renderOverview = () => {
+          if (!overview) return;
+          overviewEl.innerHTML = simNetOverview(overview, selectedHost, store.simDecisions);
+          overviewEl.querySelectorAll("[data-host]").forEach((n) => n.addEventListener("click", () => openHost(n.dataset.host)));
+        };
+        const openHost = async (host) => {
+          selectedHost = host; renderOverview();
+          theaterEl.innerHTML = `<div class="nv-stage"><span class="nv-dot run"></span>Forecasting ${esc(host)}…</div>`;
+          const fc = await api.get(`/api/upload/${res.upload_id}/forecast?host=${encodeURIComponent(host)}&mc=20`);
+          store.sel = { campaign: "upload", host, upload_id: res.upload_id, ground_truth: Boolean(fc.ground_truth) };
+          theaterEl.innerHTML = ""; const rb = h(`<div id="nv-content"></div>`); theaterEl.appendChild(rb);
+          forecastPage(rb, { ...fc, upload_id: res.upload_id, scenario: fc.scenario || { host, label: "Uploaded capture" },
+                             onDecisionApplied: renderOverview });
+          theaterEl.insertBefore(h(`<p class="nv-note">This capture also drives <a href="/forecast">Forecast</a>, <a href="/network">Network</a>, <a href="/attack">ATT&CK</a> and <a href="/investigate">Investigate</a>.</p>`), rb);
+        };
+        renderOverview();
+        openHost((overview && overview.hosts[0] && overview.hosts[0].host) || res.hosts[0]);
       } catch (e) { stagesEl.innerHTML = `<p class="nv-err">Upload failed: ${esc(e.message)}</p>`; }
       finally { runEl.disabled = false; }
     });
