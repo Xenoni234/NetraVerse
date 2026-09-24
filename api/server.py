@@ -595,9 +595,12 @@ def live_options(host: str, window: str | None = None):
     for REAL via /api/live/actions (nft + router); the live risk graph then falls
     on the real subsequent windows.
     """
-    if LIVE_FLOWS is None or not LIVE_FLOWS.exists():
+    if LIVE_FLOWS is None:
         return {"available": False, "host": host,
-                "note": "Live flow capture dir not configured (set NETRAVERSE_LIVE_FLOWS)."}
+                "note": "Live flow capture not configured (set NETRAVERSE_LIVE_FLOWS)."}
+    if not LIVE_FLOWS.exists():
+        return {"available": False, "host": host,
+                "note": f"No live capture yet at {LIVE_FLOWS} — start agent/arp_mirror_capture.sh."}
     from src.data.windowing import WindowConfig, build_windows
     from src.inference.live import load_live_flows
     flows = load_live_flows(str(LIVE_FLOWS), campaign_id="live", max_files=400)
