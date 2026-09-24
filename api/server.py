@@ -36,7 +36,7 @@ from src.inference.live_state import infer_behavioral_stage, recommended_action
 from src.response.firewall import ActionStore, ActionValidationError, NftablesExecutor
 from src.response.router_enforce import CompositeExecutor, RouterExecutor
 from src.decision.llm_advisor import advise as llm_advise, warmup as llm_warmup
-from src.inference.counterfactual import mitigated_timeline, compare_timelines
+from src.inference.counterfactual import mitigated_timeline, compare_timelines, project_persistence
 from src.decision.options import rank_options
 from src.explain.shap_wrapper import RiskExplainer
 from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIONS, stage_defence
@@ -626,7 +626,10 @@ def live_options(host: str, window: str | None = None):
         nz = beh[beh > 0]
         if len(nz):
             stage_id = int(nz.mode().iloc[0])
-    opts = rank_options(flows, str(host), stage_id, cut, fc, threshold=thr,
+    # Live "now" has no future windows: project the current behaviour forward so
+    # the options have a real horizon to act on (block -> decays, no-op -> stays).
+    projected = project_persistence(flows, str(host), cut, horizon_windows=int(fc.history_length))
+    opts = rank_options(projected, str(host), stage_id, cut, fc, threshold=thr,
                         horizon_col=rc, entity_granularity="src_ip")
     return _json_safe({"available": True, "host": str(host), "window": str(cut),
                        "stage": STAGE_UI.get(stage_id, str(stage_id)), "stage_id": stage_id,

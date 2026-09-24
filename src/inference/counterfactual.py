@@ -77,6 +77,40 @@ def apply_decision(
     return work  # unknown action -> no change
 
 
+def project_persistence(
+    flows: pd.DataFrame,
+    host: str,
+    from_ts: pd.Timestamp,
+    *,
+    horizon_windows: int = 14,
+    stride_seconds: int = 30,
+) -> pd.DataFrame:
+    """Extend a LIVE capture into the near future by repeating the host's most
+    recent window of flows (persistence — "the current behaviour continues").
+
+    Live "now" has no future windows, so the counterfactual has nothing to act on.
+    This projects the honest persistence baseline forward: without action the
+    repeated attack keeps risk high; a block removes those future flows so the
+    risk decays. Only the target host's flows are projected — the rest of the
+    capture is unchanged.
+    """
+    if flows.empty or "timestamp" not in flows.columns:
+        return flows
+    work = flows.copy()
+    ts = pd.to_datetime(work["timestamp"], utc=True, errors="coerce")
+    frm = pd.Timestamp(from_ts)
+    win = pd.Timedelta(seconds=stride_seconds)
+    recent = work.loc[(work.get("src_ip").astype(str) == str(host)) & (ts > frm - win) & (ts <= frm)]
+    if recent.empty:
+        return work
+    reps = []
+    for k in range(1, int(horizon_windows) + 1):
+        r = recent.copy()
+        r["timestamp"] = pd.to_datetime(r["timestamp"], utc=True, errors="coerce") + win * k
+        reps.append(r)
+    return pd.concat([work, *reps], ignore_index=True)
+
+
 def mitigated_timeline(
     flows: pd.DataFrame,
     host: str,
@@ -216,4 +250,4 @@ def compare_timelines(
     }
 
 
-__all__ = ["apply_decision", "mitigated_timeline", "compare_timelines"]
+__all__ = ["apply_decision", "mitigated_timeline", "compare_timelines", "project_persistence"]
