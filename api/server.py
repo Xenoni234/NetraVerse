@@ -36,6 +36,8 @@ from src.inference.live_state import recommended_action
 from src.response.firewall import ActionStore, ActionValidationError, NftablesExecutor
 from src.response.router_enforce import CompositeExecutor, RouterExecutor
 from src.decision.llm_advisor import advise as llm_advise, warmup as llm_warmup
+from src.inference.counterfactual import mitigated_timeline, compare_timelines
+from src.decision.options import rank_options
 from src.explain.shap_wrapper import RiskExplainer
 from src.mitre.stage_mapping import STAGE_NAMES, STAGE_TACTICS, STAGE_DESCRIPTIONS, stage_defence
 from demo.helpers import (PACKET_FEATURES, attack_intervals, benign_references,
@@ -1161,6 +1163,61 @@ def upload_forecast(uid: str, host: str, mc: int = 0):
 @app.get("/api/upload/{uid}/explain")
 def upload_explain(uid: str, host: str, window: str):
     return _explain_host(_upload_host_frame(uid, host), window)
+
+
+def _upload_baseline(uid: str, host: str):
+    """(forecaster, host baseline risk timeline, primary horizon, risk column)."""
+    hf = _upload_host_frame(uid, host)
+    fc = _forecaster()
+    primary = int(max(fc.horizons))
+    baseline = fc.forecast_host_timeline(hf, mc_samples=0)
+    return fc, baseline, primary, f"risk_k{primary}"
+
+
+@app.get("/api/simulate/options")
+def simulate_options(uid: str, host: str, window: str):
+    """Ranked containment options at a pause point, each with its simulated Δrisk."""
+    record = _UPLOADS.get(uid)
+    if record is None:
+        raise HTTPException(404, "Unknown upload id (session expired).")
+    flows = record.get("flows", pd.DataFrame())
+    fc, baseline, primary, risk_col = _upload_baseline(uid, host)
+    cut = pd.Timestamp(window)
+    stage_id = 0
+    if not baseline.empty:
+        w = pd.to_datetime(baseline["window_start"], utc=True)
+        match = baseline.loc[w == pd.to_datetime(cut, utc=True)]
+        row = match.iloc[0] if len(match) else baseline.iloc[-1]
+        stage_id = int(row.get(f"stage_k{primary}", 0) or 0)
+    threshold = float(fc.threshold_for_horizon(primary))
+    opts = rank_options(flows, host, stage_id, cut, fc, threshold=threshold,
+                        horizon_col=risk_col, baseline_timeline=baseline)
+    return _json_safe({"upload_id": uid, "host": host, "window": window,
+                       "stage": STAGE_UI.get(stage_id, str(stage_id)), "stage_id": stage_id,
+                       "threshold": threshold, "options": opts})
+
+
+@app.post("/api/simulate/apply")
+def simulate_apply(payload: dict):
+    """Baseline vs mitigated risk timeline for an accepted decision (before/after)."""
+    uid = str(payload.get("upload_id", ""))
+    host = str(payload.get("host", ""))
+    record = _UPLOADS.get(uid)
+    if record is None:
+        raise HTTPException(404, "Unknown upload id (session expired).")
+    action_type = str(payload.get("action_type", ""))
+    target_ip = str(payload.get("target_ip") or host)
+    window = str(payload.get("cut_window", ""))
+    flows = record.get("flows", pd.DataFrame())
+    fc, baseline, primary, risk_col = _upload_baseline(uid, host)
+    cut = pd.Timestamp(window)
+    mit = mitigated_timeline(flows, host, action_type, cut, fc, target_ip=target_ip,
+                             target_port=payload.get("target_port"))
+    cmp = compare_timelines(baseline, mit, threshold=float(fc.threshold_for_horizon(primary)),
+                            horizon_col=risk_col)
+    cmp.update({"upload_id": uid, "host": host, "action_type": action_type,
+                "target_ip": target_ip, "cut_window": window})
+    return _json_safe(cmp)
 
 
 @app.get("/api/evaluation")
