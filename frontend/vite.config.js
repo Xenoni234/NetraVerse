@@ -22,7 +22,8 @@ const routeDocuments = {
 const API_TARGET = process.env.NV_API_TARGET || "http://100.72.80.52:8000";
 
 export default defineConfig({
-  server: { proxy: { "/api": { target: API_TARGET, changeOrigin: true } } },
+  // Regex key so the proxy matches /api/... but NOT the frontend's own /api.js.
+  server: { proxy: { "^/api/": { target: API_TARGET, changeOrigin: true } } },
   plugins: [{
     name: "stitch-route-documents",
     configureServer(server) {
