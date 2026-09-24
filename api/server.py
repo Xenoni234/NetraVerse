@@ -1213,8 +1213,9 @@ def simulate_apply(payload: dict):
     cut = pd.Timestamp(window)
     mit = mitigated_timeline(flows, host, action_type, cut, fc, target_ip=target_ip,
                              target_port=payload.get("target_port"))
+    settle = cut + pd.Timedelta(seconds=30 * int(getattr(fc, "history_length", 10)))
     cmp = compare_timelines(baseline, mit, threshold=float(fc.threshold_for_horizon(primary)),
-                            cut_ts=cut, horizon_col=risk_col)
+                            cut_ts=cut, horizon_col=risk_col, settle_ts=settle)
     cmp.update({"upload_id": uid, "host": host, "action_type": action_type,
                 "target_ip": target_ip, "cut_window": window})
     return _json_safe(cmp)

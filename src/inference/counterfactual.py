@@ -108,15 +108,23 @@ def compare_timelines(
     threshold: float,
     cut_ts: "pd.Timestamp | None" = None,
     horizon_col: str = "risk_k4",
+    settle_ts: "pd.Timestamp | None" = None,
 ) -> dict[str, Any]:
     """Align baseline vs mitigated risk by window and summarize the FUTURE impact.
 
-    Containment starts at ``cut_ts``: windows *before* it are unchanged history;
-    windows *at/after* it carry the mitigated risk (~0 when the attacker is fully
-    contained and thus has no remaining windows). "Prevented" and the peak
-    before/after are measured over the **post-cut** windows only — the pre-cut
-    peak already happened and can't be undone, so including it would hide the
-    prevention.
+    Containment starts at ``cut_ts``: windows *before* it are unchanged history.
+    ``peak_before`` (what the attack would have reached) is the max baseline risk
+    over the **post-cut** windows.
+
+    Judging whether the action worked needs care because the forecast lags the
+    block: for one history-length (~5 min) after the cut, origin windows still
+    forecast from *pre-block* history and stay elevated even though the attacker's
+    traffic has already stopped. Those transition windows don't reflect the
+    post-block reality, so ``peak_after`` and ``prevented`` are measured over the
+    **settled** region (windows at/after ``settle_ts``). If the attacker has no
+    flows left to reach the settled region, the attack is contained (peak_after
+    0). ``settle_ts`` defaults to ``cut_ts`` (no transition allowance) for
+    backward compatibility; callers pass ``cut + history_length·30s``.
     """
     def _series(df: pd.DataFrame) -> dict[str, float]:
         if df is None or df.empty or horizon_col not in df:
@@ -128,21 +136,26 @@ def compare_timelines(
     mit = _series(mitigated)
     windows = sorted(set(base) | set(mit))
     cut = pd.Timestamp(cut_ts) if cut_ts is not None else None
+    settle = pd.Timestamp(settle_ts) if settle_ts is not None else cut
 
     baseline_arr, mitigated_arr = [], []
-    post_base, post_mit = [], []
+    post_base, settled_mit = [], []
     for w in windows:
         b = base.get(w, 0.0)
-        is_post = cut is None or pd.Timestamp(w) >= cut
+        wt = pd.Timestamp(w)
+        is_post = cut is None or wt >= cut
         m = mit.get(w, 0.0) if is_post else b  # unchanged history before the cut
         baseline_arr.append({"window_start": w, "risk": round(b, 6)})
         mitigated_arr.append({"window_start": w, "risk": round(m, 6)})
         if is_post:
             post_base.append(b)
-            post_mit.append(m)
+            if settle is None or wt >= settle:
+                settled_mit.append(m)
 
     peak_before = round(max(post_base, default=0.0), 6)   # what the attack WOULD reach
-    peak_after = round(max(post_mit, default=0.0), 6)      # what happens with the action
+    # Settled post-block risk. No settled windows => the attacker was fully cut
+    # off before the forecast could settle => contained (0).
+    peak_after = round(max(settled_mit, default=0.0), 6)
     return {
         "baseline": baseline_arr,
         "mitigated": mitigated_arr,
@@ -152,6 +165,7 @@ def compare_timelines(
         "prevented": bool(peak_after < float(threshold)),
         "threshold": round(float(threshold), 6),
         "cut_window": None if cut is None else str(cut),
+        "settle_window": None if settle is None else str(settle),
         "horizon": horizon_col,
     }
 

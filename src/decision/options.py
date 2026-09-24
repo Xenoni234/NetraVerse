@@ -71,6 +71,10 @@ def rank_options(
     dest = _top_destination(flows, host)
     playbook = stage_defence(int(stage_id))
     candidates = list(dict.fromkeys(_COMMON + _STAGE_EXTRA.get(int(stage_id), [])))
+    # Allow the forecast one history-length to settle after the block before we
+    # judge prevention (origin windows within that span still use pre-block
+    # history and lag the containment).
+    settle_ts = pd.Timestamp(cut_ts) + pd.Timedelta(seconds=30 * int(getattr(fc, "history_length", 10)))
 
     options: list[dict[str, Any]] = []
     for action_type in candidates:
@@ -82,7 +86,7 @@ def rank_options(
             entity_granularity=entity_granularity,
         )
         cmp = compare_timelines(baseline_timeline, mit, threshold=threshold,
-                                cut_ts=cut_ts, horizon_col=horizon_col)
+                                cut_ts=cut_ts, horizon_col=horizon_col, settle_ts=settle_ts)
         options.append({
             "action_type": action_type,
             "label": _ACTION_LABEL.get(action_type, action_type.replace("_", " ")),
