@@ -865,39 +865,38 @@
   }
 
   async function homePage(content) {
-    let sel; try { sel = await currentSelection(); } catch (e) { content.innerHTML = `<div class="nv-err">${esc(e.message)}</div>`; return; }
-    const d = sel.fc; ctxFromForecast(d);
-    // top-3 behavioural drivers (real, from explain on the focus window)
-    let drivers = "";
-    try {
-      const win = d.focus_at || d.peak_at;
-      const ex = await api.get(sel.upload_id
-        ? `/api/upload/${sel.upload_id}/explain?host=${encodeURIComponent(sel.host)}&window=${encodeURIComponent(win)}`
-        : `/api/explain?campaign=${encodeURIComponent(sel.campaign)}&host=${encodeURIComponent(sel.host)}&window=${encodeURIComponent(win)}`);
-      drivers = section("Behavioural attribution", "Why is the forecast at this level?", "Top behavioural changes contributing to the forecast.",
-        `<div class="nv-evidence">${ex.drivers.slice(0, 3).map((dr, i) => {
-          const up = dr.observed > dr.reference;
-          return `<div class="nv-erow"><div class="lbl"><span class="nv-mono nv-muted">0${i + 1}</span> &nbsp;${esc(dr.feature.replace(/_/g," "))}</div>
-            <div class="chg" style="color:${up?"#dc2626":"#0d9488"}">${up?"▲ increased":"▼ decreased"}</div>
-            <div class="val">obs ${(+dr.observed).toLocaleString(undefined,{maximumFractionDigits:2})} · normal ~${(+dr.reference).toLocaleString(undefined,{maximumFractionDigits:2})}</div></div>`;
-        }).join("")}</div><div class="nv-cta-row"><a class="nv-btn sec" href="/investigate">Investigate supporting evidence →</a></div>`);
-    } catch { drivers = ""; }
+    // Network-centric command centre: the live discovered network, not the
+    // offline gallery (which is not part of the live-network deployment).
+    setCtx({ scenario: "Live network", host: "—", horizon: "+120s", mode: "Live", data: "Discovery + Forecast" });
+    let fc = null;
+    try { fc = await api.get("/api/network/forecast"); } catch (e) { fc = null; }
+    if (!fc || !fc.available) {
+      content.innerHTML = card("", `<div class="nv-empty">The live network is not connected yet.
+        Start discovery and the forecaster on the sensor, then reload.
+        <div class="nv-cta-row" style="margin-top:12px"><a class="nv-btn" href="/topology">Open 3D topology</a>
+        <a class="nv-btn sec" href="/live">Live dashboard</a></div></div>`);
+      return;
+    }
+    const devices = fc.devices || [];
+    const wn = fc.whos_next || [];
+    const alerting = devices.filter((x) => x.forecast_state === "CONFIRMED_ALERT" || x.forecast_state === "EARLY_WARNING").length;
+    const whoRows = wn.length
+      ? `<div class="nv-tablewrap"><table class="nv"><thead><tr><th>Device</th><th>Stage</th><th>ETA</th><th class="num">Peak risk</th></tr></thead><tbody>${
+          wn.map((w) => `<tr><td class="nv-mono">${esc(w.hostname || w.host)}</td><td>${stageBadge(w.stage)}</td><td class="nv-mono">${esc(w.eta || "now")}</td><td class="num">${pct(w.peak_risk)}</td></tr>`).join("")
+        }</tbody></table></div>`
+      : `<div class="nv-empty">No devices are forecast to be compromised right now.</div>`;
     content.innerHTML =
       card("", `<div class="nv-grid">
-        ${metric("Current state", riskBadge(d.peak_risk, d.threshold))}
-        ${metric("Active scenario", `<small>${esc(d.scenario.label.split("|")[0].trim())}</small>`, { sub: d.scenario.host })}
-        ${metric("Peak onset risk", pct(d.peak_risk), { cls: d.peak_risk >= d.threshold ? "alert" : "" })}
-        ${metric(d.ground_truth ? "Warning lead time" : "Mode", `<small>${esc(leadLabel(d))}</small>`)}
+        ${metric("Devices discovered", num(fc.device_count))}
+        ${metric("Monitored", num(fc.monitored_count))}
+        ${metric("Alerting now", num(alerting), { cls: alerting ? "alert" : "" })}
+        ${metric("Enforcement", `<small>${esc(fc.mode || "—")}</small>`, { cls: fc.mode === "enforce" ? "alert" : "" })}
+        ${metric("Feed", `<small>${esc(fc.state || (fc.stale ? "STALE" : "LIVE"))}</small>`, { cls: fc.stale ? "alert" : "ok" })}
       </div>`) +
-      plainBlock(d.plain_language) +
-      section("Future forecast", "What happens next?", "Observed forecast-risk timeline with the alert threshold and any recorded attack windows.",
-        riskTimeline(d) +
-        `<div style="margin-top:14px" class="nv-flow">${forecastNode(d)}</div>`) +
-      drivers +
-      card("Explore", `<p class="nv-note" style="margin-top:0">Every page below is driven by this same capture — no fixture data.</p>
-        <div class="nv-cta-row"><a class="nv-btn" href="/forecast">View forecast</a><a class="nv-btn sec" href="/attack">ATT&CK</a>
-        <a class="nv-btn sec" href="/network">Network</a><a class="nv-btn sec" href="/validate">Validate</a>
-        <a class="nv-btn sec" href="/model">Model</a><a class="nv-btn sec" href="/simulate">Run a capture</a></div>`);
+      section("Compromise forecast", "Who's next", "Devices predicted to be compromised in the next 30–300 seconds, ranked by soonest and highest risk.", whoRows) +
+      card("Explore", `<p class="nv-note" style="margin-top:0">The live network is discovered on the sensor's LAN; forecasts run on the sensor and the attack participants.</p>
+        <div class="nv-cta-row"><a class="nv-btn" href="/topology">3D network topology</a><a class="nv-btn sec" href="/live">Live dashboard</a>
+        <a class="nv-btn sec" href="/validate">Validate</a><a class="nv-btn sec" href="/model">Model</a></div>`);
   }
 
   async function simulatePage(content) {
