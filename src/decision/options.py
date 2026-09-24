@@ -108,7 +108,7 @@ def rank_options(
 
 def _explain(action_type: str, target: str, cmp: dict, stage_id: int, playbook: dict) -> str:
     stage = STAGE_NAMES.get(int(stage_id), "the attack")
-    drop = int(round(cmp["expected_risk_drop"] * 100))
+    drop = int(round(cmp["risk_drop"] * 100))
     verb = {
         "block_source_ip": f"Dropping all traffic from {target} removes the attacker's flows",
         "isolate_host": f"Quarantining {target} cuts it off from the network",
