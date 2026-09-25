@@ -98,3 +98,11 @@ def live_decide(host: str, choice: str, action=None, token: str | None = None) -
     headers = {"x-operator-token": token} if token else {}
     return _ok(_client.post("/live/decision", json={"host": host, "step": 0, "choice": choice, "action": action},
                             headers=headers))
+
+
+def narration(aid: str, host: str, step: int) -> dict:
+    return _ok(_client.get(f"/upload/{aid}/narration", params={"host": host, "step": step}))
+
+
+def live_narration(host: str) -> dict:
+    return _ok(_client.get("/live/narration", params={"host": host}))

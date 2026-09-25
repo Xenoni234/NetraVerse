@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api import routes_live, routes_upload
 from src.api.service import get_service
+from src.decision import ollama_narration
 from src.utils.config import ROOT
 
 app = FastAPI(title="NetraVerse API", version="2.0.0",
@@ -25,6 +26,7 @@ app.include_router(routes_live.router)
 @app.on_event("startup")
 def _load() -> None:
     get_service()          # load weights once
+    ollama_narration.warmup()
 
 
 @app.get("/health")

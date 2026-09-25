@@ -86,6 +86,14 @@ def decision_context(host: str):
     return get_service().decision_context(a, host, len(a.steps) - 1)
 
 
+@router.get("/narration")
+def narration(host: str):
+    a = monitor().latest
+    if a is None:
+        raise HTTPException(409, "No live data yet.")
+    return get_service().narration(a, host, len(a.steps) - 1)
+
+
 @router.post("/decision")
 def decide(req: DecisionRequest, x_operator_token: str | None = Header(default=None)):
     """Accept/Modify apply a REAL nftables rule on the sensor (FR17); risk is then re-measured live."""

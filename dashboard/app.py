@@ -206,7 +206,9 @@ def replay_body() -> None:
                    and cur >= (tlf["first_alert_step"] or 0) else "")
                 + "</div>")
         if S.pending_ctx is not None and not S.decided:
-            choice, action = decision_panel(S.pending_ctx, key=f"dec-{S.aid}")
+            choice, action = decision_panel(
+                S.pending_ctx, key=f"dec-{S.aid}",
+                fetch_narration=lambda: api.narration(S.aid, S.focus, S.cursor))
             if choice:
                 with st.spinner("Applying action to the traffic and re-running the rollout ..."):
                     res = api.decide(S.aid, S.focus, S.cursor, choice, action)
@@ -296,7 +298,8 @@ def live_body() -> None:
             if not S.get("op_token"):
                 st.warning("Enter the operator token in the sidebar - Accept/Modify apply a REAL firewall "
                            "rule on the sensor and are refused without it.")
-            choice, action = decision_panel(ctx, key="live-dec")
+            choice, action = decision_panel(ctx, key="live-dec",
+                                            fetch_narration=lambda: api.live_narration(S.live_focus))
             if choice:
                 try:
                     S.live_result = api.live_decide(S.live_focus, choice, action, S.get("op_token"))

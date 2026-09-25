@@ -15,6 +15,7 @@ import pandas as pd
 import torch
 
 from src.decision import counterfactual as CF
+from src.decision import ollama_narration
 from src.decision.rule_engine import Action, all_actions, recommend
 from src.explainability.captum_explainer import explain
 from src.features import schema as S
@@ -59,7 +60,8 @@ class Engine:
         self.alert_n = self.cfg.get("eval", {}).get("alert_consecutive", 2)
         m = self.scaler.mean.copy()
         m[self.scaler.LOG_IDX] = np.expm1(m[self.scaler.LOG_IDX])
-        self.typical = m                                    # unscaled "average window"
+        # unscaled reference window for explanations: median of active training windows
+        self.typical = np.asarray(ck["typical"], np.float32) if ck.get("typical") else m
         self.idle_scaled = self.scaler.transform(np.zeros((1, S.N_FEATURES), np.float32))[0]
         self.lock = threading.Lock()
         self.checkpoint = path
@@ -323,10 +325,19 @@ class Service:
         ctx = {"host": host, "role": role, "attacker": attacker, "victims": victims,
                "c2_peers": egress, "top_port": top_port}
         rec = recommend(stage, drivers, ctx)
-        narration = None
-        return {"host": host, "step": step, "stage": stage_info(stage), "risk": round(peak, 4),
-                "context": ctx, "recommended": rec.to_dict(), "driving_features": drivers,
-                "narration": narration}
+        out = {"host": host, "step": step, "stage": stage_info(stage), "risk": round(peak, 4),
+               "context": ctx, "recommended": rec.to_dict(), "driving_features": drivers}
+        # optional local-LLM narration of the ALREADY-MADE decision (never the decision source, R9)
+        out["narration"] = ollama_narration.request(self.narration_key(a, host, step), out)
+        return out
+
+    @staticmethod
+    def narration_key(a: "Analysis", host: str, step: int) -> str:
+        return f"{a.id}:{a.created:.0f}:{host}:{step}"
+
+    def narration(self, a: "Analysis", host: str, step: int) -> dict:
+        got = ollama_narration.get(self.narration_key(a, host, step))
+        return got if got is not None else self.decision_context(a, host, step)["narration"]
 
     def decide(self, a: Analysis, host: str, step: int, choice: str, action: dict | None,
                live: bool = False) -> dict:

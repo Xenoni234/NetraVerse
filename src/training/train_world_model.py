@@ -186,6 +186,16 @@ def apply_calibration(p, calib: dict | None):
     return 1 / (1 + np.exp(-(calib["a"] * _logit(p) + calib["b"])))
 
 
+def typical_active(data) -> list[float]:
+    """Median raw feature values over ACTIVE training windows - the 'typical' reference used in
+    explanation sentences (an all-window mean is dominated by idle minutes and misleads)."""
+    from src.features.schema import FEATURE_COLUMNS
+    from src.training.data import load_windows
+    frame, _ = load_windows(sorted(set(data.frame["dataset"])))
+    act = frame[(frame["out_flows"] + frame["in_flows"]) > 0]
+    return act[FEATURE_COLUMNS].median().astype(float).round(4).tolist()
+
+
 def finalize(model, data, cfg, datasets, use_gnn, tag, pos_weight, history) -> dict:
     L, K = cfg["windowing"]["history"], cfg["windowing"]["horizon"]
     model = model.to(device())
@@ -206,7 +216,7 @@ def finalize(model, data, cfg, datasets, use_gnn, tag, pos_weight, history) -> d
     MODELS.mkdir(exist_ok=True); REPORTS.mkdir(exist_ok=True)
     save_checkpoint(MODELS / f"world_model{suffix}.pt", model.cpu(), data.scaler,
                     {"threshold": thr, "calibration": calib, "metrics": result["test"],
-                     "trained_on": datasets})
+                     "trained_on": datasets, "typical": typical_active(data)})
     with open(MODELS / f"training_config{suffix}.yaml", "w") as fh:
         yaml.safe_dump(cfg, fh, sort_keys=False)
     (REPORTS / f"wm_{tag}.json").write_text(json.dumps(result, indent=2, default=float))

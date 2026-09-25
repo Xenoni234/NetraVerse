@@ -91,6 +91,12 @@ def decision_context(aid: str, host: str, step: int):
     return get_service().decision_context(_get(aid), host, step)
 
 
+@router.get("/{aid}/narration")
+def narration(aid: str, host: str, step: int):
+    """Poll the optional LLM narration (status: pending | ready | fallback | disabled)."""
+    return get_service().narration(_get(aid), host, step)
+
+
 @router.post("/{aid}/decision")
 def decide(aid: str, req: DecisionRequest):
     try:

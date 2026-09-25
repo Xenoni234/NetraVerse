@@ -20,7 +20,31 @@ def drivers_block(drivers: list[dict], title: str = "Why the model thinks so") -
     st.html(f"<div class='nv-card'><div class='nv-h'>{html.escape(title)}</div>{''.join(rows)}</div>")
 
 
-def decision_panel(ctx: dict, *, key: str):
+def narration_block(first: dict, fetch) -> None:
+    """Secondary, clearly-labelled narration. Polls in its own fragment so a slow LLM never blocks."""
+    state = {"n": first}
+
+    def body():
+        n = state["n"]
+        if n.get("status") == "pending":
+            try:
+                n = state["n"] = fetch()
+            except Exception:
+                pass
+        src = n.get("source", "template")
+        label = ("Analyst narration - local LLM, descriptive only (the rule engine made the decision)"
+                 if src.startswith("ollama") else "Analyst narration - template (local LLM off or unavailable)")
+        with st.expander(label, expanded=True):
+            if n.get("status") == "pending":
+                st.caption("Local model is writing the note ...")
+            st.write(n.get("text", ""))
+            if n.get("latency_ms"):
+                st.caption(f"{src} · {n['latency_ms']} ms")
+
+    st.fragment(run_every=2 if first.get("status") == "pending" else None)(body)()
+
+
+def decision_panel(ctx: dict, *, key: str, fetch_narration=None):
     """Returns (choice, action_id) when the analyst clicks, else (None, None)."""
     rec = ctx["recommended"]
     stage = ctx["stage"]
@@ -54,7 +78,6 @@ def decision_panel(ctx: dict, *, key: str):
             choice, action = "reject", None
     with st.expander("Evidence (integrated-gradients attribution)", expanded=False):
         drivers_block(ctx.get("driving_features", []), "Top driving features")
-        if ctx.get("narration"):
-            st.caption("Narration (local LLM, descriptive only - not the decision source)")
-            st.write(ctx["narration"])
+    if fetch_narration is not None:
+        narration_block(ctx.get("narration") or {}, fetch_narration)
     return choice, action
