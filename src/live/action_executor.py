@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from src.decision.rule_engine import Action
 
-DEFAULT_PROTECTED = "127.0.0.1,100.72.80.52,100.81.46.8,192.168.0.203,192.168.0.1"
+DEFAULT_PROTECTED = "127.0.0.1,100.72.80.52,100.81.46.8,192.168.0.101,192.168.0.203,192.168.0.227,192.168.0.1"
 
 
 @dataclass
@@ -60,7 +60,7 @@ def nft_commands(action: Action) -> list[str]:
 
     def rule(match: str, verdict: str = "drop") -> None:
         for chain in ("forward", "input", "output"):
-            rules.append(f"nft add rule inet {t} {chain} {match} {verdict} comment \"nv:{action.id}\"")
+            rules.append(f"nft add rule inet {t} {chain} {match} {verdict} comment '\"nv:{action.id}\"'")
 
     if action.kind in ("block_source", "isolate_host"):
         rule(f"ip saddr {tgt}"); rule(f"ip daddr {tgt}")
@@ -98,7 +98,8 @@ def apply(action: Action, live: bool = False) -> Enforcement:
         return Enforcement(action.id, True, False, True, cmds,
                            "Dry-run (NV_ENFORCE!=1): rule shown, not applied.")
     for c in cmds:
-        res = subprocess.run(["sudo", "-n", "sh", "-c", c], capture_output=True, text=True, timeout=10)
+        # argv form: sudoers typically allows only `NOPASSWD: /usr/sbin/nft`, not a shell
+        res = subprocess.run(["sudo", "-n", *shlex.split(c)], capture_output=True, text=True, timeout=10)
         if res.returncode != 0 and "add table" not in c and "add chain" not in c:
             return Enforcement(action.id, True, False, False, cmds, f"nft failed: {res.stderr.strip()}")
     return Enforcement(action.id, True, True, False, cmds, "Rule applied on the sensor.",
@@ -117,7 +118,7 @@ def revoke(action_id: str) -> list[str]:
             chain = s.split()[1]
         if f"nv:{action_id}" in s and "# handle" in s:
             h = s.rsplit("# handle", 1)[1].strip()
-            cmds.append(f"nft delete rule inet {t} {chain} handle {shlex.quote(h)}")
+            cmds.append(f"nft delete rule inet {t} {chain} handle {int(h)}")
     for c in cmds:
-        subprocess.run(["sudo", "-n", "sh", "-c", c], capture_output=True, text=True, timeout=10)
+        subprocess.run(["sudo", "-n", *shlex.split(c)], capture_output=True, text=True, timeout=10)
     return cmds
