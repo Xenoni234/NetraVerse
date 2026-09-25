@@ -48,17 +48,17 @@ class LiveMonitor:
     def start(self) -> None:
         if self.started:
             return
-        self.started = time.time()
+        if not self.replay and not self.iface:
+            raise RuntimeError("Set NV_LIVE_IFACE (or NV_LIVE_REPLAY_PCAP) to start live capture.")
         if self.replay:
             threading.Thread(target=self._replay_loop, daemon=True).start()
         else:
-            if not self.iface:
-                raise RuntimeError("Set NV_LIVE_IFACE (or NV_LIVE_REPLAY_PCAP) to start live capture.")
             import scapy.layers.inet  # noqa: F401
             from scapy.sendrecv import AsyncSniffer
             self.sniffer = AsyncSniffer(iface=self.iface, filter=os.environ.get("NV_LIVE_BPF", "ip"),
                                         prn=self.gen.on_packet, store=False)
-            self.sniffer.start()
+            self.sniffer.start()       # raises here if the interface/capture permission is missing
+        self.started = time.time()
         threading.Thread(target=self._loop, daemon=True).start()
 
     def stop(self) -> None:
