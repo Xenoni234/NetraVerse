@@ -293,10 +293,18 @@ def live_body() -> None:
         cur = next(hh for hh in hosts if hh["host"] == S.live_focus)
         if cur["peak"] >= ov["threshold"]:
             ctx = api.live_decision_context(S.live_focus)
+            if not S.get("op_token"):
+                st.warning("Enter the operator token in the sidebar - Accept/Modify apply a REAL firewall "
+                           "rule on the sensor and are refused without it.")
             choice, action = decision_panel(ctx, key="live-dec")
             if choice:
-                res = api.live_decide(S.live_focus, choice, action, S.get("op_token"))
-                S.live_result = res
+                try:
+                    S.live_result = api.live_decide(S.live_focus, choice, action, S.get("op_token"))
+                    S.live_error = None
+                except api.ApiError as e:
+                    S.live_error = str(e)
+            if S.get("live_error"):                     # persists across the 4 s refreshes
+                st.error(f"Decision not applied - {S.live_error}")
         else:
             drivers_block(api.live_explain(S.live_focus), "Current drivers (integrated gradients)")
         if S.get("live_result"):
