@@ -10,7 +10,17 @@ PCAP ┼─ fusion.windowize ─ WorldModel ──┼─ rollout(state, 300 s) �
 Live ┘   (one 39-feature schema)        └─ GraphSAGE host context            (deterministic)   (same rollout, action applied)
 ```
 
-## Quick start (offline, one machine)
+## Quick start: Docker (one command, R19)
+
+```bash
+docker compose up --build          # backend :8000, dashboard http://localhost:8501 (Ollama internal only)
+```
+
+- Bundled replay samples are mounted from `demo/samples`. Generate them once with `python -m demo.make_samples`, or just upload any CSV or PCAP in the UI.
+- The narration model is pulled once into a volume. Set `NV_NARRATION=0` to run with template narration only.
+- Two-page architecture summary: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Quick start (offline, one machine, no Docker)
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt      # Linux: .venv/bin/pip
@@ -111,6 +121,33 @@ These are also reflected in `benchmarks.md`.
 - **Cross-dataset generalisation fails (R4, reported, not dropped).** Trained on CIC only, the model does not transfer zero-shot to CTU-13 (PR-AUC 0.006) or UNSW-NB15 (0.189). LogReg fails the same way (0.007 and 0.158). The testbeds differ too much in what "normal" per-host traffic looks like; per-capture normalisation did not fix it.
 - **GraphSAGE helps.** With host-graph context, test PR-AUC is 0.921 vs 0.904 without it. CIC-2017 goes from 0.51 to 0.60 and CTU-13 from 0.57 to 0.60.
 - **Counterfactuals are replay-based.** For recorded traffic the "after" curve replays the real traffic minus the flows the rule would have stopped. It cannot model an adaptive attacker.
+
+## Decision narration (Phase 10)
+
+- `src/decision/ollama_narration.py` asks a **local** Ollama model (default `qwen2.5:3b`, set via `NV_OLLAMA_MODEL`) to describe the decision the rule engine already made.
+- It runs asynchronously with a 30 s timeout and falls back to a template. The model is warmed up when the API starts.
+- The dashboard labels the text as descriptive only. Disable it with `NV_NARRATION=0`.
+
+## Targeted retraining on your own lab (Phase 11, R4)
+
+The dataset-trained model does not transfer to a new network: see the cross-dataset results, and in a live home-network test a real port scan scored 0%. The fix is to record labelled traffic on your own lab.
+
+1. **Record on the sensor:** `tcpdump -i <iface> -w data/raw/lab/session1.pcap`
+2. **Run the attack sequence** from the attacker machine, against your own device only:
+
+   ```bash
+   NV_I_OWN_THIS_TARGET=yes NV_ATTACKER_IP=<attacker LAN IP> demo/attack_scripts/run_sequence.sh <target>
+   ```
+
+   It starts with 5 minutes of benign baseline, then runs recon, brute force and (optionally) a lateral probe. Each stage's time window goes into `data/raw/lab/schedule.jsonl`.
+3. **Build and retrain:**
+
+   ```bash
+   python -m src.training.lab_dataset
+   python -m src.training.train_world_model --datasets cic2017 cic2018 ctu13 unsw lab
+   ```
+
+   The lab rows are reported per dataset in `benchmarks.md`. Keep the capture as the R12 fallback PCAP.
 
 ## Live demo (Phases 8/11)
 

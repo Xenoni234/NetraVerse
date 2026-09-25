@@ -1,0 +1,43 @@
+# One-command judge deployment (R19):   docker compose up        -> http://localhost:8501
+# Fully offline at runtime (R10). The only network access is the one-time image build and
+# the one-time `ollama pull` of the small narration model (skip it with NV_NARRATION=0).
+services:
+  backend:
+    image: ${DOCKERHUB_USER:-netraverse}/netraverse-backend:latest
+    build: {context: ., dockerfile: Dockerfile.backend}
+    ports: ["8000:8000"]
+    environment:
+      NV_OLLAMA_URL: http://ollama:11434
+      NV_OLLAMA_MODEL: ${NV_OLLAMA_MODEL:-qwen2.5:3b}
+      NV_NARRATION: ${NV_NARRATION:-1}
+    volumes:
+      - ./demo/samples:/app/demo/samples:ro      # bundled replay files (python -m demo.make_samples)
+      - uploads:/app/data/uploads
+
+  dashboard:
+    image: ${DOCKERHUB_USER:-netraverse}/netraverse-dashboard:latest
+    build: {context: ., dockerfile: Dockerfile.dashboard}
+    ports: ["8501:8501"]
+    environment:
+      NV_API_URL: http://backend:8000            # container -> container
+      NV_API_PUBLIC_URL: http://localhost:8000   # browser -> backend (offline 3D bundle)
+    volumes:
+      - ./demo/samples:/app/demo/samples:ro
+    depends_on:
+      backend: {condition: service_healthy}
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes: [ollama:/root/.ollama]
+
+  ollama-pull:                                  # one-shot: fetch the narration model into the volume
+    image: ollama/ollama:latest
+    depends_on: [ollama]
+    environment: {OLLAMA_HOST: http://ollama:11434}
+    entrypoint: ["/bin/sh", "-c", "sleep 3; ollama pull ${NV_OLLAMA_MODEL:-qwen2.5:3b} || true"]
+    volumes: [ollama:/root/.ollama]
+    restart: "no"
+
+volumes:
+  ollama:
+  uploads:

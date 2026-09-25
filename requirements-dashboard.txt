@@ -1,0 +1,6 @@
+# Dashboard container only (talks to the backend over HTTP)
+streamlit==1.63.0
+plotly==7.0.0
+httpx==0.28.1
+pandas==3.0.5
+numpy==2.5.3
