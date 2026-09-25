@@ -98,7 +98,7 @@ Every decision below was applied identically to the world model and the baseline
    - The model is always selected by validation macro PR-AUC, never by demo behaviour.
 6. **Onset emphasis.** Sequences that are benign now but have an attack inside the horizon get 5× weight on the imagined-risk loss, because early warning is the goal.
 7. **Packet-feature dropout (p = 0.5).** Flow CSVs never carry TTL, window or retransmission data. Randomly hiding them in training makes one model valid for CSV and PCAP input alike.
-8. **Cross-dataset normalisation (R4).** `--capture-norm` optionally re-centres each capture on its own median/IQR. It is unsupervised: no labels, only that network's traffic statistics. It is evaluated in `reports/cross_dataset_cn.json` and enabled only if it improves the zero-shot test without hurting the in-domain one.
+8. **Cross-dataset normalisation (R4).** `--capture-norm` optionally re-centres each capture on its own median/IQR. It is unsupervised: no labels, only that network's traffic statistics. It was evaluated in `reports/cross_dataset_cn.json`, **did not improve** zero-shot transfer (CTU-13 PR-AUC 0.006 either way; UNSW 0.107 vs 0.189 without it), and is therefore **off** in the shipped model.
 9. **Threshold.** The threshold maximises the *mean* F1 across datasets on validation, so no single easy dataset sets the operating point. Platt calibration (fitted on validation, monotone) makes the displayed probabilities interpretable. It does not change any ranking metric.
 
 ## Honest limitations
@@ -108,6 +108,8 @@ These are also reflected in `benchmarks.md`.
 - **Detection is strong, but true forecasting before onset is weak.** On most CIC/CTU campaigns the first labelled attack window has no benign precursor at 60 s resolution. The world model flags attacks within about one window of onset and then forecasts their continuation and escalation. It rarely alerts *before* the first attack flow.
 - **Persistence (oracle) scores higher on continuation.** It is told the true current label, which no deployed system has. It is reported for transparency and cannot score early warning.
 - **UNSW-NB15 is trivially separable per host.** Its attacker hosts never behave benignly. Per-dataset rows are reported so it does not inflate the pooled numbers.
+- **Cross-dataset generalisation fails (R4, reported, not dropped).** Trained on CIC only, the model does not transfer zero-shot to CTU-13 (PR-AUC 0.006) or UNSW-NB15 (0.189). LogReg fails the same way (0.007 and 0.158). The testbeds differ too much in what "normal" per-host traffic looks like; per-capture normalisation did not fix it.
+- **GraphSAGE helps.** With host-graph context, test PR-AUC is 0.921 vs 0.904 without it. CIC-2017 goes from 0.51 to 0.60 and CTU-13 from 0.57 to 0.60.
 - **Counterfactuals are replay-based.** For recorded traffic the "after" curve replays the real traffic minus the flows the rule would have stopped. It cannot model an adaptive attacker.
 
 ## Live demo (Phases 8/11)
