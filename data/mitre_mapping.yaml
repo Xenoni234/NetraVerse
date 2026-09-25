@@ -1,0 +1,62 @@
+# Attack-type -> MITRE ATT&CK stage lookup (Phase 0).
+# None of the source datasets are natively ATT&CK-labelled; this table is the
+# manually built bridge (prd.md section 7). Matching is case-insensitive and
+# by substring, first match wins, so order matters (specific before generic).
+#
+# Stage ids are fixed and shared by the model's stage head:
+#   0 BENIGN, 1 RECONNAISSANCE, 2 INITIAL_ACCESS, 3 LATERAL_MOVEMENT,
+#   4 COMMAND_AND_CONTROL, 5 EXFILTRATION, 6 IMPACT
+# IMPACT (TA0040) is added because DoS/DDoS are a large share of the CIC
+# attack traffic and fit none of the five PS stages (documented decision, R20).
+
+stages:
+  0: {name: BENIGN,              tactic_id: null,     tactic: "No adversary activity"}
+  1: {name: RECONNAISSANCE,      tactic_id: TA0043,   tactic: "Reconnaissance"}
+  2: {name: INITIAL_ACCESS,      tactic_id: TA0001,   tactic: "Initial Access"}
+  3: {name: LATERAL_MOVEMENT,    tactic_id: TA0008,   tactic: "Lateral Movement"}
+  4: {name: COMMAND_AND_CONTROL, tactic_id: TA0011,   tactic: "Command and Control"}
+  5: {name: EXFILTRATION,        tactic_id: TA0010,   tactic: "Exfiltration"}
+  6: {name: IMPACT,              tactic_id: TA0040,   tactic: "Impact"}
+
+benign_labels: [benign, normal, background, "0", ""]
+
+rules:
+  # --- Reconnaissance -------------------------------------------------------
+  - {match: portscan,            stage: 1}   # CIC-IDS2017
+  - {match: reconnaissance,      stage: 1}   # UNSW-NB15
+  - {match: analysis,            stage: 1}   # UNSW-NB15 (port scans, probing)
+  - {match: recon-,              stage: 1}   # CIC-IoT-2023
+  - {match: vulnerabilityscan,   stage: 1}   # CIC-IoT-2023
+  - {match: scan,                stage: 1}
+  # --- Exfiltration (data disclosure) ---------------------------------------
+  - {match: heartbleed,          stage: 5}   # CIC-IDS2017: server memory disclosure
+  - {match: exfil,               stage: 5}
+  # --- Lateral movement ------------------------------------------------------
+  - {match: infilt,              stage: 3}   # CIC-IDS2017 "Infilteration"/"Infiltration" (internal pivot)
+  - {match: worm,                stage: 3}   # UNSW-NB15
+  # --- Command and control ----------------------------------------------------
+  - {match: botnet,              stage: 4}   # CTU-13 flow=From-Botnet-...
+  - {match: bot,                 stage: 4}   # CIC-IDS2017 Bot (Ares), CIC-IDS2018 Bot
+  - {match: backdoor,            stage: 4}   # UNSW-NB15 Backdoor(s), CIC-IoT Backdoor_Malware
+  - {match: mirai,               stage: 4}
+  # --- Impact (availability) -------------------------------------------------
+  - {match: ddos,                stage: 6}
+  - {match: dos,                 stage: 6}
+  # --- Initial access (credential / exploit) ---------------------------------
+  - {match: patator,             stage: 2}   # CIC-IDS2017 FTP/SSH brute force
+  - {match: brute,               stage: 2}
+  - {match: web attack,          stage: 2}
+  - {match: sql,                 stage: 2}
+  - {match: xss,                 stage: 2}
+  - {match: injection,           stage: 2}
+  - {match: exploit,             stage: 2}
+  - {match: shellcode,           stage: 2}
+  - {match: fuzzer,              stage: 2}
+  - {match: generic,             stage: 2}
+  - {match: spoof,               stage: 2}
+  - {match: mitm,                stage: 2}
+  - {match: hijack,              stage: 2}
+  - {match: upload,              stage: 2}
+
+# Anything labelled as an attack that matches no rule falls back here.
+default_attack_stage: 2

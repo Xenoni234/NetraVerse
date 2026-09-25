@@ -1,0 +1,45 @@
+# World model (RSSM-lite + GraphSAGE) training config. Shipped with the weights (R18).
+seed: 7
+
+windowing:
+  window_s: 60          # one latent step = 60 s (CIC-2017 timestamps are minute-resolution)
+  history: 10           # L: windows the encoder filters over (10 min)
+  horizon: 5            # K: imagined steps -> 300 s forecast horizon (FR8)
+  min_flows: 20         # a host needs >= 20 flows in a capture to get a timeline
+  max_hosts: 200        # top-200 hosts by activity per capture (label-agnostic)
+
+data:
+  train_datasets: [cic2017, cic2018, ctu13, unsw]
+  split: [0.6, 0.2, 0.2]       # chronological inside every capture, never random (R1/R4)
+  idle_keep: 0.15              # keep 15% of all-quiet benign sequences in TRAINING only (class balance)
+  packet_mask_dropout: 0.5
+  episode_gap: 5               # attack windows <=5 quiet minutes apart = one attack episode (R20)     # randomly hide packet-level features so CSV and PCAP inputs both work
+
+model:
+  embed: 128
+  deter: 192            # GRU deterministic state h
+  stoch: 32             # Gaussian stochastic latent z
+  hidden: 192
+  gnn: true             # GraphSAGE neighbour context concatenated into the encoder input
+  gnn_dim: 32
+  n_stages: 7
+  min_std: 0.1
+
+train:
+  epochs: 20
+  batch: 256
+  lr: 0.0006
+  weight_decay: 0.0001
+  grad_clip: 50.0
+  kl_weight: 0.5
+  free_nats: 1.0
+  recon_weight: 1.0
+  risk_weight: 4.0
+  stage_weight: 1.0
+  risk_pos_weight_cap: 20.0   # BCE pos_weight = min(cap, neg/pos) - class balancing (R1)
+  patience: 4
+  onset_boost: 4.0            # extra weight on "benign now, attack within 300 s" sequences (early warning)
+
+eval:
+  alert_consecutive: 2        # sustained alert = 2 consecutive windows over threshold
+  mc_samples: 16              # stochastic rollouts for the confidence band

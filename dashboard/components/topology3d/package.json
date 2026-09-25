@@ -1,0 +1,8 @@
+{
+  "name": "netraverse-topology3d",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/topology.js --bundle --format=esm --minify --outfile=dist/topology3d.js"
+  },
+  "devDependencies": { "esbuild": "*", "three": "0.186.0" }
+}

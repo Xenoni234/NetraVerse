@@ -1,167 +1,171 @@
-"""Packet-level features from PCAP, via a TShark wrapper.
+"""Packet-level extraction (Scapy): raw packets -> canonical flow table.
 
-Optional enrichment. The flow-level CSVs the public datasets ship are already
-aggregated, which loses the fine timing structure that distinguishes, say, C2
-beaconing from ordinary polling. Where raw PCAPs exist, this module extracts
-sub-flow detail and merges it back onto the ``(entity, window)`` grid.
+One ``FlowAssembler`` serves both offline PCAP files and the live sniffer, so a
+PCAP of some traffic and the same traffic captured live produce identical flows.
 
-This path is **optional by design**: ``configs/dev.yaml`` sets
-``features.use_packet_features: false`` so the whole pipeline runs without
-Wireshark installed, and ``src/eval/ablations.py`` has a ``flow_only`` ablation
-that measures whether these features pay for themselves.
-
-Requirements
-------------
-System ``tshark`` binary on ``PATH`` (Wireshark), plus ``pyshark``. ``scapy`` is
-the fallback for small captures where spawning TShark is not worth it.
-
-TODO
-----
-* [ ] Implement ``tshark_available`` and make every public function degrade
-      gracefully (return empty features + a warning) when it is False.
-* [ ] Implement ``extract_pcap_features`` using ``tshark -T fields`` batch export
-      rather than per-packet Python iteration — pyshark's live iteration is
-      roughly two orders of magnitude slower.
-* [ ] Implement ``beacon_score`` (IAT periodicity via autocorrelation or the
-      coefficient of variation of inter-arrival times).
-* [ ] Implement ``tls_handshake_features`` (JA3-ish: cipher-suite count, SNI
-      presence, self-signed certs) — decide whether these enter the LOCKED
-      schema or stay experimental.
-* [ ] Align PCAP clock with flow CSV clock — the CIC captures are offset.
-* [ ] Cache extracted packet features per PCAP so re-runs are cheap.
+Besides NetFlow-style counters it keeps the packet-level signals flow CSVs lack:
+TTL, TCP window size and retransmissions (a repeated TCP sequence number that
+carries payload), which feed the masked packet features of the unified schema.
 """
-
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, Iterator, Mapping, Sequence
+from typing import Iterable
 
 import pandas as pd
 
-#: TShark fields exported in the batch call. Keep in sync with the parser.
-TSHARK_FIELDS: Final[tuple[str, ...]] = (
-    "frame.time_epoch",
-    "frame.len",
-    "ip.src",
-    "ip.dst",
-    "ip.proto",
-    "tcp.srcport",
-    "tcp.dstport",
-    "tcp.flags",
-    "tcp.window_size_value",
-    "udp.srcport",
-    "udp.dstport",
-    "tls.handshake.type",
-    "tls.handshake.extensions_server_name",
-)
+from src.features.flow_features import _finalise
 
-#: Columns this module contributes. Experimental until promoted into the
-#: LOCKED FEATURE_COLUMNS list in unified_schema.
-PACKET_FEATURE_COLUMNS: Final[tuple[str, ...]] = (
-    "pkt_size_p50",
-    "pkt_size_p95",
-    "iat_cv",              # coefficient of variation of inter-arrival times
-    "beacon_score",        # 0..1, higher = more periodic
-    "tcp_window_mean",
-    "tls_client_hello_count",
-    "distinct_sni_count",
-)
+IDLE_TIMEOUT_S = 60.0     # flow ends after 60 s of silence
+ACTIVE_TIMEOUT_S = 60.0   # long flows are cut every 60 s so each window sees them promptly
 
 
-def tshark_available() -> bool:
-    """Return whether a usable ``tshark`` binary is on ``PATH``.
+@dataclass
+class _Flow:
+    src: str
+    dst: str
+    sport: int
+    dport: int
+    proto: str
+    first: float
+    last: float
+    fwd_pkts: int = 0
+    bwd_pkts: int = 0
+    fwd_bytes: int = 0
+    bwd_bytes: int = 0
+    syn: int = 0
+    rst: int = 0
+    fin: int = 0
+    ttl_sum: float = 0.0
+    ttl_n: int = 0
+    win_sum: float = 0.0
+    win_n: int = 0
+    retrans: int = 0
+    seen_seq: set = field(default_factory=set)
 
-    Every other function in this module must check this first and degrade to a
-    warning plus empty features rather than raising — a teammate without
-    Wireshark should still be able to run the pipeline.
-    """
-    raise NotImplementedError("TODO: shutil.which('tshark') + a version probe")
-
-
-def extract_pcap_features(
-    pcap_path: Path,
-    *,
-    window_seconds: int = 30,
-    stride_seconds: int = 10,
-    entity_granularity: str = "src_ip",
-    cache_dir: Path | None = None,
-) -> pd.DataFrame:
-    """Extract :data:`PACKET_FEATURE_COLUMNS` per ``(entity, window)`` from a PCAP.
-
-    Args:
-        pcap_path: Capture file to read.
-        window_seconds: Window span; must match the flow pipeline.
-        stride_seconds: Window stride; must match the flow pipeline.
-        entity_granularity: ``src_ip``, ``dst_ip`` or ``src_dst_pair``.
-        cache_dir: If given, memoise the TShark export here.
-
-    Returns:
-        Frame indexed by ``entity_id`` / ``window_start``, or an empty frame with
-        the right columns when TShark is unavailable.
-    """
-    raise NotImplementedError("TODO: tshark batch export -> parse -> window -> aggregate")
-
-
-def run_tshark(
-    pcap_path: Path, fields: Sequence[str] = TSHARK_FIELDS, *, display_filter: str | None = None
-) -> pd.DataFrame:
-    """Run ``tshark -T fields`` over ``pcap_path`` and parse the TSV output.
-
-    Batch export (one subprocess, streamed TSV) rather than per-packet Python
-    iteration — the latter is far too slow for multi-GB captures.
-    """
-    raise NotImplementedError("TODO: subprocess with -T fields -E separator=/t, parse to frame")
+    def row(self) -> dict:
+        return {
+            "ts_start": self.first, "ts_end": self.last, "src_ip": self.src, "dst_ip": self.dst,
+            "sport": self.sport, "dport": self.dport, "proto": self.proto,
+            "fwd_pkts": self.fwd_pkts, "bwd_pkts": self.bwd_pkts,
+            "fwd_bytes": self.fwd_bytes, "bwd_bytes": self.bwd_bytes,
+            "syn": self.syn, "rst": self.rst, "fin": self.fin,
+            "ttl": self.ttl_sum / self.ttl_n if self.ttl_n else float("nan"),
+            "tcp_win": self.win_sum / self.win_n if self.win_n else float("nan"),
+            "retrans": float(self.retrans) if self.proto == "tcp" else float("nan"),
+            "label": "",
+        }
 
 
-def iter_packets_scapy(pcap_path: Path) -> Iterator[Mapping[str, object]]:
-    """Fallback packet iterator using scapy, for small captures and tests."""
-    raise NotImplementedError("TODO: scapy PcapReader yielding minimal packet dicts")
+class FlowAssembler:
+    """Bidirectional 5-tuple flow table with idle/active timeouts."""
+
+    def __init__(self, idle: float = IDLE_TIMEOUT_S, active: float = ACTIVE_TIMEOUT_S):
+        self.idle, self.active = idle, active
+        self.table: dict[tuple, _Flow] = {}
+        self.done: list[dict] = []
+        self.packets = 0
+
+    @staticmethod
+    def _parse(pkt):
+        from scapy.layers.inet import IP, TCP, UDP, ICMP
+        from scapy.layers.inet6 import IPv6
+        if IP in pkt:
+            ip = pkt[IP]; ttl = ip.ttl; src, dst = ip.src, ip.dst
+            frag = bool(ip.flags.MF) or ip.frag > 0
+        elif IPv6 in pkt:
+            ip = pkt[IPv6]; ttl = ip.hlim; src, dst = ip.src, ip.dst; frag = False
+        else:
+            return None
+        size = len(ip)          # IP-layer length (no link header)
+        if TCP in pkt:
+            t = pkt[TCP]
+            return (src, dst, int(t.sport), int(t.dport), "tcp", size, ttl, str(t.flags),
+                    int(t.window), int(t.seq), len(bytes(t.payload)), frag)
+        if UDP in pkt:
+            u = pkt[UDP]
+            return (src, dst, int(u.sport), int(u.dport), "udp", size, ttl, "", None, None, 0, frag)
+        if ICMP in pkt:
+            return (src, dst, 0, 0, "icmp", size, ttl, "", None, None, 0, frag)
+        return (src, dst, 0, 0, "other", size, ttl, "", None, None, 0, frag)
+
+    def add(self, pkt, ts: float | None = None) -> None:
+        p = self._parse(pkt)
+        if p is None:
+            return
+        ts = float(pkt.time if ts is None else ts)
+        src, dst, sport, dport, proto, size, ttl, flags, win, seq, plen, _frag = p
+        self.packets += 1
+        key_f = (src, dst, sport, dport, proto)
+        key_b = (dst, src, dport, sport, proto)
+        fl = self.table.get(key_f)
+        fwd = True
+        if fl is None:
+            fl = self.table.get(key_b)
+            fwd = False
+        if fl is not None and (ts - fl.last > self.idle or ts - fl.first > self.active):
+            self._close(key_f if fwd else key_b)
+            fl = None
+        if fl is None:
+            fwd = True
+            fl = _Flow(src, dst, sport, dport, proto, ts, ts)
+            self.table[key_f] = fl
+        fl.last = max(fl.last, ts)
+        if fwd:
+            fl.fwd_pkts += 1; fl.fwd_bytes += size
+            fl.ttl_sum += ttl; fl.ttl_n += 1
+            if win is not None:
+                fl.win_sum += win; fl.win_n += 1
+        else:
+            fl.bwd_pkts += 1; fl.bwd_bytes += size
+        if proto == "tcp":
+            fl.syn |= "S" in flags
+            fl.rst |= "R" in flags
+            fl.fin |= "F" in flags
+            if plen > 0 and seq is not None:
+                k = (fwd, seq)
+                if k in fl.seen_seq:
+                    fl.retrans += 1
+                else:
+                    fl.seen_seq.add(k)
+
+    def _close(self, key) -> None:
+        fl = self.table.pop(key, None)
+        if fl is not None:
+            fl.seen_seq = set()
+            self.done.append(fl.row())
+
+    def expire(self, now: float) -> None:
+        for k, fl in list(self.table.items()):
+            if now - fl.last > self.idle or now - fl.first > self.active:
+                self._close(k)
+
+    def flush_all(self) -> None:
+        for k in list(self.table):
+            self._close(k)
+
+    def drain(self) -> pd.DataFrame:
+        rows, self.done = self.done, []
+        if not rows:
+            return pd.DataFrame(columns=list(_Flow("", "", 0, 0, "", 0, 0).row()))
+        return _finalise(pd.DataFrame(rows))
 
 
-def beacon_score(inter_arrival_times: Sequence[float]) -> float:
-    """Score how periodic a packet stream is, in ``[0, 1]``.
-
-    Regular, low-variance inter-arrival times (classic C2 beaconing) score high;
-    bursty human traffic scores low. Implement as ``1 - normalised CV``, or via
-    autocorrelation peak strength if CV proves too noisy.
-    """
-    raise NotImplementedError("TODO: CV-based score, consider autocorrelation variant")
-
-
-def tls_handshake_features(packets: pd.DataFrame) -> Mapping[str, float]:
-    """Summarise TLS handshakes in a window (ClientHello count, distinct SNI)."""
-    raise NotImplementedError("TODO: filter handshake types, count distinct SNI values")
+def packets_to_flows(packets: Iterable) -> pd.DataFrame:
+    fa = FlowAssembler()
+    for i, pkt in enumerate(packets):
+        fa.add(pkt)
+        if i % 5000 == 0:
+            fa.expire(float(pkt.time))
+    fa.flush_all()
+    return fa.drain()
 
 
-def merge_packet_features(
-    flow_features: pd.DataFrame, packet_features: pd.DataFrame
-) -> pd.DataFrame:
-    """Left-join packet features onto the flow feature grid.
-
-    Windows with no packet coverage get 0.0, not NaN, and a ``has_pcap`` flag so
-    the ablation can tell "absent" from "genuinely zero".
-    """
-    raise NotImplementedError("TODO: left join on (entity_id, window_start), fill 0.0")
-
-
-def align_pcap_clock(packets: pd.DataFrame, offset_seconds: float) -> pd.DataFrame:
-    """Shift packet timestamps to match the flow CSV clock.
-
-    The CIC captures need a per-day offset; get it by cross-correlating packet
-    volume against flow volume, then record it in ``docs/`` rather than guessing.
-    """
-    raise NotImplementedError("TODO: apply offset; add a helper to estimate it")
-
-
-__all__ = [
-    "TSHARK_FIELDS",
-    "PACKET_FEATURE_COLUMNS",
-    "tshark_available",
-    "extract_pcap_features",
-    "run_tshark",
-    "iter_packets_scapy",
-    "beacon_score",
-    "tls_handshake_features",
-    "merge_packet_features",
-    "align_pcap_clock",
-]
+def pcap_to_flows(path: Path) -> pd.DataFrame:
+    import scapy.layers.inet  # noqa: F401  (register IP/TCP/UDP dissectors before reading)
+    import scapy.layers.inet6  # noqa: F401
+    import scapy.layers.l2  # noqa: F401  (Ethernet link type)
+    from scapy.utils import PcapReader
+    with PcapReader(str(path)) as reader:
+        return packets_to_flows(reader)

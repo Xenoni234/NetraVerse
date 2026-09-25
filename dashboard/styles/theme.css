@@ -1,0 +1,38 @@
+/* NetraVerse - flat SOC console styling (design.md). No glow, no gradients, no blur. */
+:root {
+  --nv-bg: #14161A; --nv-panel: #20242B; --nv-border: #2C313A; --nv-text: #E6E6E6;
+  --nv-muted: #8B929C; --nv-accent: #3B9C9B; --nv-atk: #C0472C; --nv-vic: #C98A2C; --nv-ok: #4B8A5E;
+  --nv-mono: "IBM Plex Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  --nv-sans: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+}
+#MainMenu, footer, header [data-testid="stToolbar"], [data-testid="stDecoration"], .stDeployButton { display: none !important; }
+header[data-testid="stHeader"] { background: transparent; height: 0; }
+.block-container { padding-top: 1.2rem !important; padding-bottom: 1rem !important; max-width: 100% !important; }
+html, body, [class*="css"] { font-family: var(--nv-sans); }
+h1, h2, h3 { font-weight: 500 !important; letter-spacing: 0 !important; }
+[data-testid="stMetricValue"] { font-family: var(--nv-mono); font-size: 1.25rem !important; }
+[data-testid="stMetricLabel"] { color: var(--nv-muted); text-transform: uppercase; font-size: .7rem !important; letter-spacing: .06em; }
+[data-testid="stMetric"] { background: var(--nv-panel); border: 1px solid var(--nv-border); border-radius: 3px; padding: 8px 12px; }
+.stButton > button { border-radius: 3px !important; box-shadow: none !important; }
+
+.nv-title { font: 600 15px var(--nv-sans); letter-spacing: .04em; color: var(--nv-text); }
+.nv-sub { font: 12px var(--nv-sans); color: var(--nv-muted); margin-bottom: 8px; }
+.nv-card { background: var(--nv-panel); border: 1px solid var(--nv-border); border-radius: 3px; padding: 10px 12px; margin: 6px 0; color: var(--nv-text); font: 13px/1.5 var(--nv-sans); }
+.nv-h { font: 600 11px var(--nv-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--nv-muted); margin-bottom: 6px; }
+.nv-kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; font-size: 12.5px; }
+.nv-kv span { color: var(--nv-muted); }
+.nv-kv b { font-weight: 500; }
+.nv-mono { font-family: var(--nv-mono); }
+.nv-rec { margin-top: 8px; font-size: 14px; }
+.nv-rec b { font-weight: 600; }
+.nv-why { color: var(--nv-muted); font-size: 12.5px; margin-top: 2px; }
+.nv-decision { border-left: 3px solid var(--nv-accent); }
+.nv-drv { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 3px 0; border-top: 1px solid var(--nv-border); font-size: 12.5px; }
+.nv-drv:first-of-type { border-top: 0; }
+.nv-up { font-family: var(--nv-mono); color: var(--nv-atk); }
+.nv-down { font-family: var(--nv-mono); color: var(--nv-ok); }
+.nv-status { font: 12px var(--nv-mono); color: var(--nv-muted); }
+.nv-pill { display: inline-block; font: 11px var(--nv-mono); padding: 1px 6px; border: 1px solid var(--nv-border); border-radius: 2px; margin-right: 4px; }
+.nv-pill.atk { color: var(--nv-atk); border-color: var(--nv-atk); }
+.nv-pill.ok { color: var(--nv-ok); border-color: var(--nv-ok); }
+.nv-pill.warn { color: var(--nv-vic); border-color: var(--nv-vic); }

@@ -1,14 +1,39 @@
-[theme]
-base = "dark"
-primaryColor = "#789aa9"
-backgroundColor = "#20252b"
-secondaryBackgroundColor = "#292f36"
-textColor = "#d6dce0"
-font = "system-ui"
+# NetraVerse dashboard theme - graphite SOC console (design.md). No default Streamlit blue.
+[server]
+headless = true
+runOnSave = false
 
 [browser]
 gatherUsageStats = false
 
-[server]
-address = "127.0.0.1"
-maxUploadSize = 2048
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true
+
+[theme]
+base = "dark"
+primaryColor = "#2A7F7E"
+backgroundColor = "#14161A"
+secondaryBackgroundColor = "#20242B"
+textColor = "#E6E6E6"
+borderColor = "#2C313A"
+linkColor = "#3B9C9B"
+font = "sans-serif"
+codeFont = "monospace"
+baseRadius = "3px"
+buttonRadius = "3px"
+showWidgetBorder = true
+redColor = "#C0472C"
+orangeColor = "#C98A2C"
+yellowColor = "#C98A2C"
+greenColor = "#4B8A5E"
+blueColor = "#3B9C9B"
+violetColor = "#8A9098"
+grayColor = "#8A9098"
+chartCategoricalColors = ["#3B9C9B", "#8A9098", "#C98A2C", "#C0472C", "#4B8A5E", "#6B7280"]
+dataframeHeaderBackgroundColor = "#20242B"
+dataframeBorderColor = "#2C313A"
+
+[theme.sidebar]
+backgroundColor = "#1B1E23"
+secondaryBackgroundColor = "#20242B"

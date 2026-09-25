@@ -1,121 +1,39 @@
-# Byte-compiled / cache
+# Python
 __pycache__/
 *.py[cod]
-*.pyc
-*.pyo
-*.so
-
-# Virtual environments
-.venv
+.venv/
 venv/
-env/
-ENV/
-
-# Packaging / build
-build/
-dist/
 *.egg-info/
-.eggs/
-
-# Data & models (never commit — see configs/*.yaml for expected paths)
-/data/
-/models/
-*.ckpt
-*.pt
-*.pth
-*.parquet
-*.pcap
-*.pcapng
-
-# Exception: ship the final trained checkpoint (PS requires weights in the repo).
-# Parent dirs must be re-included before the file itself.
-!models/
-!models/wm_final/
-!models/wm_final/best.ckpt
-!models/wm_final/benchmark.json
-!models/wm_final/generalization.json
-# ablation scratch (retrained per-run checkpoints + temp metrics) — never commit
-/models/_ablations/
-/models/wm_ablate_*/
-/models/wm_smoke_*/
-/models/wm_improved/
-!/models/wm_repaired/
-/models/wm_repaired/*
-!/models/wm_repaired/best.ckpt
-!/models/wm_repaired/config.json
-!/models/wm_repaired/audit.json
-!/models/wm_repaired/experiments.json
-!/models/wm_repaired/metrics.json
-
-# Notebooks
-.ipynb_checkpoints/
-
-# Experiment tracking
-/mlruns/
-/runs/
-/outputs/
-/wandb/
-# Logs
-*.log
-/logs/
-# Tooling caches
+build/
 .pytest_cache/
-.mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
 
-# OS / editor
+# Data: raw datasets and generated artifacts are never committed
+/data/raw/
+/data/processed/
+/data/uploads/
+!/data/mitre_mapping.yaml
+
+# Demo samples are regenerated from data/raw with `python -m demo.make_samples`
+/demo/samples/*.csv
+/demo/samples/*.binetflow
+
+# Only the shipped checkpoints/configs (R18) are tracked
+/models/*
+!/models/world_model.pt
+!/models/training_config.yaml
+!/models/baseline_logreg.pkl
+
+# Frontend build deps for the 3D bundle (dist/ IS committed so no node is needed at runtime)
+/dashboard/components/topology3d/node_modules/
+
+# Local
+.env
+.env.*
+!.env.example
+*.log
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-
-# Local secrets and application state
-.env
-.env.*
-!.env.example
-.streamlit/
-*.sqlite3
-*.db
-
-# Frontend dependencies and generated bundles
-/frontend/node_modules/
-/frontend/dist/
-
-# Generated SIH demo datasets (regenerate with scripts/)
-/demo/large_labelled/
-/demo/mixed_labelled/
-/demo/samples/*.csv
-!/demo/samples/sample_webattack_192.168.10.8.csv
-
-# Generated checkpoints and experiment artifacts
-/models/wm_sih_demo/
-/models/wm_mixed_demo/
-/models/wm_phase6/
-/models/wm_onset/
-/models/wm_onset_v2/
-/models/wm_onset_v3/
-/models/wm_pair/
-/models/wm_wc/
-/models/wm_server/
-/models/wm_improved/
-/models/wm_ctu13/
-/models/wm_cicids2017/
-/models/wm_cicids2017_full/
-/models/wm_repaired/
-
-# Generated reports and prediction outputs; keep source documentation under docs/
-/reports/*
-!/reports/pipeline_repair_audit.json
-!/reports/pipeline_repair_results.md
-!/reports/world_model_improvement.md
-/results/*
-!/results/lr_baseline.json
-
-# Public SIH showcase release: the small checkpoint and its report are tracked.
-# Training logs, optimizer state and generated side files remain ignored.
-!/models/wm_sih_demo/
-/models/wm_sih_demo/*
-!/models/wm_sih_demo/best.ckpt
-!/models/wm_sih_demo/finetune_report.json
+.claude/

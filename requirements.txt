@@ -1,42 +1,21 @@
-# ---- Core numerics / tabular ----
-numpy>=1.26,<2.2
-pandas>=2.1,<2.3
-pyarrow>=15.0
-scikit-learn>=1.4
-
-# ---- Deep learning (CPU wheels by default; install CUDA build separately if GPU) ----
-torch>=2.0
-
-# ---- Config management ----
-omegaconf>=2.3
-hydra-core>=1.3
-pyyaml>=6.0
-
-# ---- Explainability ----
-shap>=0.44
-
-# ---- Demo / serving ----
-streamlit>=1.30
-fastapi>=0.110
-uvicorn[standard]>=0.27
-
-# ---- Plotting ----
-matplotlib>=3.8
-seaborn>=0.13
-
-# ---- Packet / PCAP handling ----
-pyshark>=0.6          # TShark wrapper (requires system `tshark` on PATH)
-scapy>=2.5
-
-# ---- Utilities ----
-tqdm>=4.66
-
-# ---- Notebooks ----
-jupyter>=1.0
-ipykernel>=6.29
-
-# ---- Testing ----
-pytest>=8.0
-pytest-cov>=4.1
-plotly>=5.20
-python-multipart>=0.0.9
+# NetraVerse - pinned to the versions the shipped model was trained/tested with
+torch==2.6.0
+torch_geometric==2.8.0.post1
+captum==0.9.0
+shap==0.52.0
+scikit-learn==1.9.1
+numpy==2.5.3
+pandas==3.0.5
+polars==1.44.2
+pyarrow==25.0.1
+scapy==2.7.0
+networkx==3.6.1
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+pydantic==2.13.5
+httpx==0.28.1
+streamlit==1.63.0
+plotly==7.0.0
+pyyaml==6.0.3
+pytest==9.1.1
