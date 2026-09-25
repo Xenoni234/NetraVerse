@@ -18,11 +18,7 @@ build/
 /demo/samples/*.csv
 /demo/samples/*.binetflow
 
-# Only the shipped checkpoints/configs (R18) are tracked
-/models/*
-!/models/world_model.pt
-!/models/training_config.yaml
-!/models/baseline_logreg.pkl
+# Trained models are tracked (R18): checkpoints, their training configs and the baseline
 
 # Frontend build deps for the 3D bundle (dist/ IS committed so no node is needed at runtime)
 /dashboard/components/topology3d/node_modules/

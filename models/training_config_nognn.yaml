@@ -1,0 +1,47 @@
+seed: 7
+windowing:
+  window_s: 60
+  history: 10
+  horizon: 5
+  min_flows: 20
+  max_hosts: 200
+data:
+  train_datasets:
+  - cic2017
+  - cic2018
+  - ctu13
+  - unsw
+  split:
+  - 0.6
+  - 0.2
+  - 0.2
+  idle_keep: 0.15
+  packet_mask_dropout: 0.5
+  capture_norm: false
+  episode_gap: 5
+model:
+  embed: 128
+  deter: 192
+  stoch: 32
+  hidden: 192
+  gnn: false
+  gnn_dim: 32
+  n_stages: 7
+  min_std: 0.1
+train:
+  epochs: 20
+  batch: 256
+  lr: 0.0006
+  weight_decay: 0.0001
+  grad_clip: 50.0
+  kl_weight: 0.5
+  free_nats: 1.0
+  recon_weight: 1.0
+  risk_weight: 4.0
+  stage_weight: 1.0
+  risk_pos_weight_cap: 20.0
+  patience: 4
+  onset_boost: 4.0
+eval:
+  alert_consecutive: 2
+  mc_samples: 16

@@ -30,7 +30,9 @@ Other samples (all alert except the PortScan and CTU-13 slices):
 
 ## B. Live home network (Phase 8/11)
 
-1. On the sensor laptop, run `NV_LIVE_IFACE=wlp0s20f3 NV_OPERATOR_TOKEN=... NV_ENFORCE=1 uvicorn src.api.main:app --host 0.0.0.0`. Mirroring comes from ARP or a SPAN port.
+> **Status:** the shipped model does not yet recognise attacks on the home network (see `docs/LIVE_SENSOR.md`). Do the lab retraining first, and use file replay (A) for the demo until then.
+
+1. On the sensor laptop, start `nv-core` exactly as in `docs/LIVE_SENSOR.md`.
 2. On the dashboard PC, run `NV_API_URL=http://<sensor>:8000 streamlit run dashboard/app.py`, go to **Live Monitor**, and click **Start sensor**.
 3. Run the attack from the attacker machine against your **own** lab VM only (R11): `NV_I_OWN_THIS_TARGET=yes demo/attack_scripts/run_sequence.sh 192.168.0.50`.
 4. When the alert fires, click **Accept** (operator token in the sidebar). A real nftables rule is installed on the sensor with a TTL. The live curve then re-measures the real traffic and should fall.

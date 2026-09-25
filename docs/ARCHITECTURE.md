@@ -72,8 +72,9 @@ Live NIC (sniffer) ─┘   one schema,        RSSM-lite +     prior-only     �
 
 ## 3. Deployment
 
-`docker compose up` starts the backend (:8000), the dashboard (:8501) and Ollama (:11434). It is fully offline at runtime.
-
+Everything runs natively and fully offline: a FastAPI backend (:8000), a Streamlit dashboard (:8501) and local Ollama (:11434, optional).
+- The live sensor runs the same backend on a Linux laptop, and the dashboard connects to it remotely.
 - Weights, scaler, calibration and config ship in `models/` (R18).
-- The dashboard is Streamlit + Plotly with the preserved three.js 3D topology, bundled offline.
-- Its modes are CSV replay, PCAP replay and Live Monitor, all on the same model and rollout.
+- The dashboard uses Streamlit + Plotly with the preserved three.js 3D topology, bundled offline.
+- Its three modes (CSV replay, PCAP replay, Live Monitor) all use the same model and rollout.
+- Setup: `docs/SETUP.md`. Live deployment: `docs/LIVE_SENSOR.md`.
