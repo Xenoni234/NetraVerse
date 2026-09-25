@@ -30,10 +30,23 @@ from src.utils.config import MODELS, world_model_config
 
 
 # ---------------------------------------------------------------- model holder
+def pick_device() -> torch.device:
+    """CUDA only when this torch build has kernels for the GPU (e.g. cu13x wheels dropped
+    Pascal/sm_61); otherwise CPU. Override with NV_DEVICE=cpu|cuda."""
+    import os
+    forced = os.environ.get("NV_DEVICE")
+    if forced:
+        return torch.device(forced)
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability(0)
+        if f"sm_{major}{minor}" in torch.cuda.get_arch_list():
+            return torch.device("cuda")
+    return torch.device("cpu")
+
+
 class Engine:
     def __init__(self, ckpt: str | None = None):
-        dev = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = torch.device(dev)
+        self.device = pick_device()
         path = ckpt or str(MODELS / "world_model.pt")
         self.model, self.scaler, ck = load_checkpoint(path, self.device)
         self.cfg = ck["config"]
