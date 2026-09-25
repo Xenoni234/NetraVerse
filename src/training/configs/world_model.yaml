@@ -13,6 +13,7 @@ data:
   split: [0.6, 0.2, 0.2]       # chronological inside every capture, never random (R1/R4)
   idle_keep: 0.15              # keep 15% of all-quiet benign sequences in TRAINING only (class balance)
   packet_mask_dropout: 0.5
+  capture_norm: false          # per-capture robust normalisation (R4 experiment, see cross_dataset_cn)
   episode_gap: 5               # attack windows <=5 quiet minutes apart = one attack episode (R20)     # randomly hide packet-level features so CSV and PCAP inputs both work
 
 model:

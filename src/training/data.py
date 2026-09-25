@@ -75,16 +75,21 @@ def sequence_starts(frame: pd.DataFrame, T: int) -> tuple[np.ndarray, np.ndarray
 
 
 def build(datasets: list[str], history: int, horizon: int, scaler: FeatureScaler | None = None,
-          all_as: str | None = None, episode_gap: int | None = None) -> SeqData:
+          all_as: str | None = None, episode_gap: int | None = None,
+          capture_norm: bool | None = None) -> SeqData:
     """``all_as='test'`` puts every valid sequence in one split (zero-shot evaluation)."""
     frame, edges = load_windows(datasets)
     T = history + horizon
     starts, split = sequence_starts(frame, T)
     raw = frame[FEATURE_COLUMNS].to_numpy(np.float32)
+    groups = frame.groupby(["dataset", "capture"], sort=False).ngroup().to_numpy()
     if scaler is None:
+        if capture_norm is None:
+            from src.utils.config import world_model_config
+            capture_norm = bool(world_model_config()["data"].get("capture_norm", False))
         train_rows = np.unique((starts[split == 0][:, None] + np.arange(T)).ravel())
-        scaler = FeatureScaler.fit(raw[train_rows])
-    x = scaler.transform(raw)
+        scaler = FeatureScaler.fit(raw[train_rows], groups[train_rows], capture_norm)
+    x = scaler.transform(raw, groups)
     nb = neighbor_aggregate(frame, x, edges, group_cols=("dataset", "capture"))
     if all_as:
         parts = {all_as: starts}

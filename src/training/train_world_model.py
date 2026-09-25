@@ -91,7 +91,7 @@ def train(cfg: dict, datasets: list[str], use_gnn: bool, tag: str, epochs: int |
     L, K = cfg["windowing"]["history"], cfg["windowing"]["horizon"]
     tr = cfg["train"]
     t0 = time.time()
-    data = D.build(datasets, L, K)
+    data = D.build(datasets, L, K, capture_norm=cfg["data"].get("capture_norm", False))
     train_starts = D.balance_train(data, data.starts["train"], cfg["data"]["idle_keep"], cfg["seed"])
     rows = train_starts[:, None] + np.arange(data.T)
     pos = data.risk[rows].mean()
@@ -112,6 +112,9 @@ def train(cfg: dict, datasets: list[str], use_gnn: bool, tag: str, epochs: int |
     history = []
     # dataset x (attack / benign) balanced sampling: every group gets equal expected mass
     tr_rows = train_starts[:, None] + np.arange(data.T)
+    # group = (dataset, attack-or-benign): every dataset gets equal expected mass per class.
+    # (A (dataset, dominant stage) grouping was tried and rejected: lower val macro PR-AUC,
+    #  see reports/wm_stagebalanced_rejected.json.)
     tr_attack = data.risk[tr_rows].max(1) > 0
     tr_ds = data.frame["dataset"].to_numpy()[train_starts]
     grp = pd.Series(list(zip(tr_ds, tr_attack)))
@@ -232,7 +235,11 @@ def main() -> None:
     ap.add_argument("--tag", default="main")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--eval-only", action="store_true")
+    ap.add_argument("--capture-norm", action="store_true", help="per-capture robust normalisation (R4)")
     a = ap.parse_args()
+    if a.capture_norm:
+        cfg = copy.deepcopy(cfg)
+        cfg["data"]["capture_norm"] = True
     if a.eval_only:
         eval_only(a.tag)
         return

@@ -26,11 +26,20 @@ TARGETS = ["ctu13", "unsw"]
 
 
 def main() -> None:
-    cfg = world_model_config()
+    import argparse
+    import copy
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--capture-norm", action="store_true")
+    ap.add_argument("--retrain", action="store_true")
+    a = ap.parse_args()
+    cfg = copy.deepcopy(world_model_config())
+    if a.capture_norm:
+        cfg["data"]["capture_norm"] = True
+    tag = "xsrc_cn" if a.capture_norm else "xsrc"
     L, K = cfg["windowing"]["history"], cfg["windowing"]["horizon"]
-    ck_path = MODELS / "world_model_xsrc.pt"
-    if not ck_path.exists():
-        train(cfg, SOURCE, cfg["model"]["gnn"], "xsrc")
+    ck_path = MODELS / f"world_model_{tag}.pt"
+    if a.retrain or not ck_path.exists():
+        train(cfg, SOURCE, cfg["model"]["gnn"], tag)
     model, scaler, ck = load_checkpoint(ck_path, device())
     thr = float(ck["threshold"])
 
@@ -43,7 +52,7 @@ def main() -> None:
     lr_thr = pick_threshold_macro(src.risk[vr][:, L:].max(1), lr.predict_proba(src.x[vr[:, :L]]),
                                   src.frame["dataset"].to_numpy()[src.starts["val"]])
 
-    out = {"source": SOURCE, "wm_threshold": thr, "lr_threshold": lr_thr, "targets": {}}
+    out = {"source": SOURCE, "capture_norm": a.capture_norm, "wm_threshold": thr, "lr_threshold": lr_thr, "targets": {}}
     for tgt in TARGETS:
         d = D.build([tgt], L, K, scaler=scaler, all_as="test")
         st = d.starts["test"]
@@ -59,7 +68,7 @@ def main() -> None:
             "persistence": {"forecast_300s": metrics(yf, yn, 0.5)},
         }
         print(tgt, json.dumps({k: v["forecast_300s"] for k, v in out["targets"][tgt].items()}, default=float))
-    (REPORTS / "cross_dataset.json").write_text(json.dumps(out, indent=2, default=float))
+    (REPORTS / f"cross_dataset{'_cn' if a.capture_norm else ''}.json").write_text(json.dumps(out, indent=2, default=float))
 
 
 if __name__ == "__main__":

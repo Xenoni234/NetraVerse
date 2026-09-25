@@ -185,6 +185,7 @@ def replay_body() -> None:
                 + "".join(f"<span class='nv-pill ok'>{m}</span>" for m in mit) + "</div>")
         if clicked and clicked != S.focus and clicked in {hh["host"] for hh in ov["hosts"]}:
             S.focus = clicked
+            S.branch = None
             if not S.decided:
                 S.decision_step = get_tl(clicked)["first_alert_step"]
             st.rerun()
@@ -241,6 +242,7 @@ def file_mode(kind: str) -> None:
                             index=[hh["host"] for hh in ov["hosts"]].index(S.focus))
         if pick != S.focus:
             S.focus = pick
+            S.branch = None
             if not S.decided:
                 S.decision_step = get_tl(pick)["first_alert_step"]
             st.rerun()
@@ -260,8 +262,17 @@ def live_body() -> None:
             f"inference {status.get('last_tick_ms') or '-'} ms"
             + (f" · <span class='nv-pill atk'>{status['error']}</span>" if status.get("error") else "") + "</div>")
     ov = stt.get("overview")
+    if not status.get("running"):
+        st.info(
+            "The live sensor is not running. It captures on the machine running the API, so start the "
+            "backend there with a capture interface, then press **Start sensor**:\n\n"
+            "- Linux sensor (root / CAP_NET_RAW): `NV_LIVE_IFACE=wlp0s20f3 uvicorn src.api.main:app --host 0.0.0.0`\n"
+            "- Windows needs Npcap installed; use the adapter name, e.g. `NV_LIVE_IFACE=\"Wi-Fi\"`\n"
+            "- No network / rehearsal: `NV_LIVE_REPLAY_PCAP=demo/fallback_pcap/live_demo.pcap`\n\n"
+            "Point this dashboard at a remote sensor with `NV_API_URL=http://<sensor>:8000`.")
+        return
     if not ov:
-        st.info("Waiting for the first 60 s window of live traffic ...")
+        st.info("Sensor running - waiting for the first 60 s window of live traffic ...")
         return
     hosts = sorted(ov["hosts"], key=lambda hh: -hh["peak"])
     focus = S.get("live_focus") or hosts[0]["host"]
