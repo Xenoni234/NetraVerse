@@ -62,10 +62,24 @@ def brute_force(target: str, port: int, seconds: int) -> None:
         time.sleep(0.15)
 
 
-def record(schedule: Path, label: str, target: str, attacker: str, fn, *args) -> None:
+def lateral(target: str, seconds: int) -> None:
+    """From the 'compromised' host, probe a NEW internal peer on lateral-movement ports.
+    This is the precursor the model should use to forecast the next victim (via the host graph)."""
+    print(f"[lateral] pivoting to {target} for {seconds}s", flush=True)
+    ports = [22, 139, 445, 3389, 5985, 23, 21, 80, 443]
+    t_end = time.time() + seconds
+    while time.time() < t_end:
+        for pt in ports:
+            if time.time() >= t_end:
+                break
+            _probe(target, pt)
+            time.sleep(0.3)
+
+
+def record(schedule: Path, label: str, targets: list[str], attacker: str, fn, *args) -> None:
     t0 = time.time()
     fn(*args)
-    entry = {"label": label, "attacker": attacker, "targets": [target],
+    entry = {"label": label, "attacker": attacker, "targets": targets,
              "start": t0, "end": time.time()}
     with open(schedule, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
@@ -81,6 +95,9 @@ def main() -> None:
     ap.add_argument("--recon", type=int, default=180)
     ap.add_argument("--gap", type=int, default=60, help="quiet gap between stages")
     ap.add_argument("--brute", type=int, default=120)
+    ap.add_argument("--lateral-target", default=None,
+                    help="a THIRD device you own (e.g. router 192.168.0.1) - enables a lateral-movement stage")
+    ap.add_argument("--lateral", type=int, default=120)
     ap.add_argument("--schedule", default="data/raw/lab/schedule.jsonl")
     a = ap.parse_args()
 
@@ -88,16 +105,22 @@ def main() -> None:
         raise SystemExit("Refusing: set NV_I_OWN_THIS_TARGET=yes to confirm you own the target.")
     if not _private(a.target) or not _private(a.attacker):
         raise SystemExit("Refusing: target and attacker must be private (RFC1918) LAN addresses.")
+    if a.lateral_target and not _private(a.lateral_target):
+        raise SystemExit("Refusing: lateral target must be a private LAN address you own.")
 
     sched = Path(a.schedule)
     sched.parent.mkdir(parents=True, exist_ok=True)
     print(f"[start] {time.strftime('%H:%M:%S')} target={a.target} attacker={a.attacker}", flush=True)
     print(f"[baseline] {a.baseline}s of no attack traffic", flush=True)
     time.sleep(a.baseline)
-    record(sched, "PortScan", a.target, a.attacker, recon, a.target, a.recon)
+    record(sched, "PortScan", [a.target], a.attacker, recon, a.target, a.recon)
     print(f"[gap] {a.gap}s quiet", flush=True)
     time.sleep(a.gap)
-    record(sched, "SSH-Patator", a.target, a.attacker, brute_force, a.target, a.ssh_port, a.brute)
+    record(sched, "SSH-Patator", [a.target], a.attacker, brute_force, a.target, a.ssh_port, a.brute)
+    if a.lateral_target:
+        print(f"[gap] {a.gap}s quiet", flush=True)
+        time.sleep(a.gap)
+        record(sched, "Infiltration", [a.lateral_target], a.attacker, lateral, a.lateral_target, a.lateral)
     print(f"[done] schedule -> {sched}", flush=True)
 
 
