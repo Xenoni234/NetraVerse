@@ -23,7 +23,7 @@ from src.features.fusion import windowize
 from src.graph.graph_utils import neighbor_aggregate
 from src.graph.host_graph_builder import roles_at, topology_snapshot
 from src.live import action_executor
-from src.mitre.mitre_lookup import stage_info, stage_names
+from src.mitre.mitre_lookup import label_to_stage, stage_info, stage_names
 from src.mitre.stage_mapper import map_sequence, map_stage
 from src.models.rollout import Intervention, batch_forecast, rollout
 from src.models.world_model import load_checkpoint
@@ -227,6 +227,13 @@ class Service:
             "hosts": hosts, "model": {"checkpoint": self.E.checkpoint, "trained_on": self.E.trained_on},
         }
 
+    def future_stages(self, s: dict) -> list[list[int]]:
+        """Forecast MITRE stage for each imagined step t+1..t+K (benign when that step's risk is low)."""
+        thr = self.E.threshold
+        fut, sp = s["future"], s["stage_probs"]
+        return [[map_stage(float(fut[i, k]), sp[i, k], thr) for k in range(fut.shape[1])]
+                for i in range(fut.shape[0])]
+
     def timeline(self, a: Analysis, host: str) -> dict:
         thr = self.E.threshold
         s = self.host_series(a, host)
@@ -247,6 +254,7 @@ class Service:
             "traffic": {k: v.astype(int).tolist() for k, v in s["traffic"].items()},
             "truth_stage": s["truth"].tolist() if s["truth"] is not None else None,
             "first_alert_step": al,
+            "future_stage": self.future_stages(s),
         }
         # FR11 early-warning margin: alert time vs predicted (and, if labelled, actual) compromise
         if al is not None:
@@ -257,6 +265,19 @@ class Service:
                 first_truth = next((i for i, v in enumerate(s["truth"]) if v > 0), None)
                 res["actual_first_attack_step"] = first_truth
                 res["lead_time_s"] = (first_truth - al) * self.E.window_s if first_truth is not None else None
+        # forecast lead: earliest state whose 300 s rollout already put the first labelled attack window
+        # above the threshold (how many seconds BEFORE it happened the world model forecast it)
+        if s["truth"] is not None:
+            a0 = next((i for i, v in enumerate(s["truth"]) if v > 0), None)
+            res["actual_first_attack_step"] = a0
+            hit = None
+            if a0 is not None:
+                for t in range(max(0, a0 - self.E.K), a0):
+                    if s["future"][t][a0 - t - 1] >= thr:
+                        hit = t
+                        break
+            res["forecast_hit_step"] = hit
+            res["forecast_lead_s"] = (a0 - hit) * self.E.window_s if hit is not None else None
         return res
 
     # -- explanations (every forecast shown can be explained, R5) ----------------
@@ -373,12 +394,46 @@ class Service:
                  "enforcement": enforcement, "at": time.time()}
         a.decisions.append(rec_d)
         cont = None
+        orig = self.host_series(a, host)
+        ts = self.host_series(a, host, branch["fc"], branch["frame"]) if branch else orig
         if branch:
-            ts = self.host_series(a, host, branch["fc"], branch["frame"])
             cont = {"risk": [round(float(v), 4) for v in ts["future"].max(1)],
                     "future": np.round(ts["future"], 4).tolist()}
+        comparison = {"without_action": self._outcome(a, orig, step, ctx, a.fm.flows, t_from),
+                      "action_label": act.label if branch else rec.label, "applied": bool(branch)}
+        if branch:
+            comparison["with_action"] = self._outcome(a, ts, step, ctx, branch["fm"].flows, t_from)
+        else:
+            # rejected: still show what the recommended action WOULD have done (not applied)
+            f3 = CF.apply_to_flows(a.fm.flows, rec, t_from)
+            fm3 = windowize(f3, window_s=self.E.window_s, hosts=a.fm.meta["hosts"], t0=a.fm.meta["t0"],
+                            source=a.source)
+            fr3, x3, nb3 = self.E.prepare(fm3)
+            fc3 = self.E.forecast_rows(*self.E.histories(fr3, x3, nb3))
+            comparison["with_action"] = self._outcome(a, self.host_series(a, host, fc3, fr3), step, ctx, f3, t_from)
         return {**rec_d, "before": before, "after": after, "delta": CF.delta(before["probs"], after["probs"]),
-                "continuation": cont, "decision_context": ctx}
+                "continuation": cont, "decision_context": ctx, "comparison": comparison}
+
+    def _outcome(self, a: Analysis, s: dict, step: int, ctx: dict, flows: pd.DataFrame, t_from: float) -> dict:
+        """What the rest of the replay looks like from the decision step on (one branch)."""
+        thr, ws = self.E.threshold, self.E.window_s
+        peak = s["future"].max(1)[step:]
+        above = peak >= thr
+        below = next((i for i, v in enumerate(above) if not v), None)
+        c = ctx["context"]
+        victims = c.get("victims") or [ctx["host"]]
+        after = flows[flows["ts_end"] >= t_from]
+        atk = after[((after["src_ip"] == c.get("attacker")) & after["dst_ip"].isin(victims))
+                    | ((after["dst_ip"] == c.get("attacker")) & after["src_ip"].isin(victims))]
+        out = {"peak_risk": round(float(peak.max()) if len(peak) else 0.0, 4),
+               "mean_risk": round(float(peak.mean()) if len(peak) else 0.0, 4),
+               "minutes_above_threshold": int(above.sum()) * ws // 60,
+               "risk_below_threshold_after_s": below * ws if below is not None else None,
+               "attacker_victim_flows": int(len(atk))}
+        if a.fm.labelled and "label" in after:
+            stg = after["label"].map({l: label_to_stage(l) for l in after["label"].unique()})
+            out["labelled_attack_flows"] = int((stg > 0).sum())
+        return out
 
     def _rollout_row(self, a, frame, x, nb, host, w, action_id=None) -> dict:
         rows = np.flatnonzero(((frame["host"] == host) & (frame["window"] == w)).to_numpy())
@@ -400,10 +455,15 @@ class Service:
         if not b:
             return None
         s = self.host_series(a, host, b["fc"], b["frame"])
+        thr = self.E.threshold
+        peak = s["future"].max(1)
         return {"from_step": b["step"], "action": b["action"].to_dict(),
-                "risk": [round(float(v), 4) for v in s["future"].max(1)],
+                "risk": [round(float(v), 4) for v in peak],
                 "future": np.round(s["future"], 4).tolist(), "lo": np.round(s["lo"], 4).tolist(),
-                "hi": np.round(s["hi"], 4).tolist()}
+                "hi": np.round(s["hi"], 4).tolist(),
+                "stage": map_sequence(peak, s["stage_probs"].max(1), thr),
+                "future_stage": self.future_stages(s),
+                "traffic": {k: v.astype(int).tolist() for k, v in s["traffic"].items()}}
 
 
 _SERVICE: Service | None = None

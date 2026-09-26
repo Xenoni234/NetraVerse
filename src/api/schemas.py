@@ -55,6 +55,11 @@ class Timeline(BaseModel):
     predicted_compromise_s_after_alert: Optional[int] = None
     actual_first_attack_step: Optional[int] = None
     lead_time_s: Optional[int] = None
+    future_stage: list[list[int]] = Field(default_factory=list,
+                                          description="forecast MITRE stage for each imagined step t+1..t+K")
+    forecast_hit_step: Optional[int] = None
+    forecast_lead_s: Optional[int] = Field(None, description="how long before the first labelled attack window "
+                                                             "the rollout already forecast it above threshold")
 
 
 class Driver(BaseModel):

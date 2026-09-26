@@ -31,3 +31,37 @@ def counterfactual_panel(res: dict) -> None:
                       xaxis=dict(title="minutes ahead", gridcolor=GRID, dtick=1),
                       yaxis=dict(title="P(attack)", range=[0, 1.05], tickformat=".0%", gridcolor=GRID))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _fmt_s(v) -> str:
+    return "never (stays above threshold)" if v is None else f"{v} s"
+
+
+def outcome_comparison(res: dict) -> None:
+    """Highlighted side-by-side: what happened without the action vs with it."""
+    cmp_ = res.get("comparison")
+    if not cmp_:
+        return
+    wo, wi = cmp_["without_action"], cmp_["with_action"]
+    applied = cmp_["applied"]
+    rows = [
+        ("peak forecast risk after decision", f"{wo['peak_risk']:.0%}", f"{wi['peak_risk']:.0%}"),
+        ("mean forecast risk after decision", f"{wo['mean_risk']:.0%}", f"{wi['mean_risk']:.0%}"),
+        ("minutes above alert threshold", f"{wo['minutes_above_threshold']}", f"{wi['minutes_above_threshold']}"),
+        ("risk back below threshold after", _fmt_s(wo['risk_below_threshold_after_s']),
+         _fmt_s(wi['risk_below_threshold_after_s'])),
+        ("attacker ↔ victim flows that got through", f"{wo['attacker_victim_flows']:,}",
+         f"{wi['attacker_victim_flows']:,}"),
+    ]
+    if "labelled_attack_flows" in wo:
+        rows.append(("labelled attack flows reaching the network", f"{wo['labelled_attack_flows']:,}",
+                     f"{wi['labelled_attack_flows']:,}"))
+    left = "Rejected - what actually happened" if not applied else "If rejected - what would have happened"
+    right = (f"Accepted - {cmp_['action_label']}" if applied
+             else f"Had you accepted - {cmp_['action_label']} (not applied)")
+    body = "".join(f"<tr><td>{k}</td><td class='nv-bad'>{a}</td><td class='nv-good'>{b}</td></tr>"
+                   for k, a, b in rows)
+    st.html(f"""<div class='nv-card nv-cmp'>
+      <div class='nv-h'>Outcome comparison from the decision point</div>
+      <table><tr><th></th><th class='nv-bad'>{left}</th><th class='nv-good'>{right}</th></tr>{body}</table>
+    </div>""")

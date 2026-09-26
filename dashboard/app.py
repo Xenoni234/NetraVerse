@@ -20,7 +20,8 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from dashboard.components import api_client as api  # noqa: E402
-from dashboard.components.counterfactual_panel import counterfactual_panel  # noqa: E402
+from dashboard.components.counterfactual_panel import counterfactual_panel, outcome_comparison  # noqa: E402
+from dashboard.components.state_graph import STAGE_COLORS, state_graph  # noqa: E402
 from dashboard.components.decision_panel import decision_panel, drivers_block  # noqa: E402
 from dashboard.components.probability_timeline import live_figure, timeline_figure  # noqa: E402
 from dashboard.components.topology_view import topology_view  # noqa: E402
@@ -194,17 +195,19 @@ def replay_body() -> None:
         if S.decided and S.branch is None and S.result and S.result["choice"] != "reject":
             S.branch = api.branch(S.aid, S.focus)
         dstep = S.result["step"] if S.result else S.decision_step
-        fig = timeline_figure(tlf, cur, height=360, branch=S.branch if S.decided else None, decision_step=dstep)
+        on_branch = bool(S.branch and S.result and cur >= S.result["step"])
+        src = S.branch if on_branch else tlf
+        fig = timeline_figure(tlf, cur, height=340, branch=S.branch if S.decided else None, decision_step=dstep)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key="tl-chart")
-        risk = (S.branch["risk"][cur] if (S.branch and S.result and cur >= S.result["step"]) else tlf["risk"][cur])
-        stg = tlf["stage"][cur]
+        risk = src["risk"][cur]
+        stg = src["stage"][cur]
         st.html("<div class='nv-status'>"
-                f"host <b class='nv-mono'>{S.focus}</b> · P(attack ≤300 s) <b>{risk:.1%}</b> · "
+                f"host <b class='nv-mono'>{S.focus}</b> · state s{cur} · P(attack ≤300 s) <b>{risk:.1%}</b> · "
                 f"stage <b>{STAGES[stg]}</b>"
                 + (f" · labelled: {STAGES[tlf['truth_stage'][cur]]}" if tlf.get("truth_stage") else "")
-                + (f" · lead time vs label: {tlf['lead_time_s']} s" if tlf.get("lead_time_s") is not None
-                   and cur >= (tlf["first_alert_step"] or 0) else "")
                 + "</div>")
+        forecast_strip(src, tlf, cur)
+        detection_banner(tlf, cur)
         if S.pending_ctx is not None and not S.decided:
             choice, action = decision_panel(
                 S.pending_ctx, key=f"dec-{S.aid}",
@@ -215,11 +218,48 @@ def replay_body() -> None:
                 S.update(result=res, decided=True, pending_ctx=None, branch=None, playing=True)
                 st.rerun(scope="app")
         elif S.result is not None:
-            counterfactual_panel(S.result)
+            outcome_comparison(S.result)
+            with st.expander("Rollout from the decision point: no action vs with action", expanded=False):
+                counterfactual_panel(S.result)
         else:
             if tlf["present"][cur]:
                 drivers_block(api.explain(S.aid, S.focus, cur),
                               f"Why {risk:.0%} at t+{t_min} min (integrated gradients)")
+    # world-model states: observed s_t and the K imagined future states with forecast ATT&CK stages
+    st.plotly_chart(state_graph(tlf, cur, branch=S.branch if S.decided else None, decision_step=dstep),
+                    use_container_width=True, config={"displayModeBar": False}, key="state-graph")
+
+
+def forecast_strip(src: dict, tl: dict, cur: int) -> None:
+    """Forecast MITRE ATT&CK stage + risk for each imagined step from the current state."""
+    fut = src["future"][cur]
+    fst = src.get("future_stage", tl["future_stage"])[cur]
+    ws = tl["window_s"]
+    chips = "".join(f"<span class='nv-stage' style='border-color:{STAGE_COLORS[s]};color:{STAGE_COLORS[s] if s else '#9AA0A6'}'>"
+                    f"+{(k + 1) * ws}s {STAGES[s]} {p:.0%}</span>" for k, (s, p) in enumerate(zip(fst, fut)))
+    st.html(f"<div class='nv-card nv-fc'><div class='nv-h'>Forecast from s{cur}: next 300 s "
+            f"(imagined states, MITRE ATT&CK)</div>{chips}</div>")
+
+
+def detection_banner(tl: dict, cur: int) -> None:
+    al = tl.get("first_alert_step")
+    if al is None or cur < al:
+        return
+    ws = tl["window_s"]
+    parts = [f"Alert raised at <b>t+{al * ws // 60} min</b> (state s{al})."]
+    if tl.get("forecast_lead_s"):
+        parts.append(f"The rollout forecast the attack <b>{tl['forecast_lead_s']} s before</b> its first "
+                     f"labelled window (from state s{tl['forecast_hit_step']}).")
+    lt = tl.get("lead_time_s")
+    if lt is not None:
+        parts.append(f"<b>{abs(lt)} s {'before' if lt > 0 else 'after'}</b> the first labelled attack flow"
+                     + (" (detected at onset, not forecast in advance)." if lt <= 0 else "."))
+    elif tl.get("truth_stage") is None:
+        parts.append("No labels in this file - lead time vs ground truth not available.")
+    if tl.get("predicted_compromise_s_after_alert"):
+        parts.append(f"At the alert, the model forecast the attack to continue/escalate within "
+                     f"<b>{tl['predicted_compromise_s_after_alert']} s</b>.")
+    st.html(f"<div class='nv-card nv-banner'><div class='nv-h'>Detection</div>{' '.join(parts)}</div>")
 
 
 def file_mode(kind: str) -> None:

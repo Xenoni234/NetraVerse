@@ -36,3 +36,13 @@ h1, h2, h3 { font-weight: 500 !important; letter-spacing: 0 !important; }
 .nv-pill.atk { color: var(--nv-atk); border-color: var(--nv-atk); }
 .nv-pill.ok { color: var(--nv-ok); border-color: var(--nv-ok); }
 .nv-pill.warn { color: var(--nv-vic); border-color: var(--nv-vic); }
+
+.nv-cmp table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.nv-cmp th, .nv-cmp td { padding: 5px 8px; border-top: 1px solid var(--nv-border); text-align: left; }
+.nv-cmp th { font-weight: 600; font-size: 12px; }
+.nv-cmp td.nv-bad, .nv-cmp td.nv-good { font-family: var(--nv-mono); }
+.nv-cmp th.nv-bad, .nv-cmp td.nv-bad { color: #D07A63; background: rgba(192,71,44,.08); }
+.nv-cmp th.nv-good, .nv-cmp td.nv-good { color: #7DB38E; background: rgba(75,138,94,.10); }
+.nv-banner { border-left: 3px solid var(--nv-atk); }
+.nv-banner.ok { border-left-color: var(--nv-ok); }
+.nv-fc span.nv-stage { display: inline-block; font: 11px var(--nv-mono); padding: 1px 6px; margin: 2px 4px 2px 0; border: 1px solid var(--nv-border); border-radius: 2px; }

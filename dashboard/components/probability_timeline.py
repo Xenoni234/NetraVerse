@@ -11,6 +11,7 @@ GREEN = "#4B8A5E"
 PANEL = "#20242B"
 GRID = "#2C313A"
 SHORT = ["", "Recon", "Init. access", "Lateral", "C2", "Exfil", "Impact"]
+STAGE_COLORS = ["#8A9098", "#C98A2C", "#C0472C", "#B5673A", "#9E3B3B", "#7D8B3A", "#6F2F2F"]
 
 
 def _layout(fig: go.Figure, height: int, x_max: float) -> go.Figure:
@@ -57,10 +58,16 @@ def timeline_figure(tl: dict, cursor: int, height: int = 360, branch: dict | Non
     fx = [x[cursor] + (k + 1) * ws for k in range(len(fut))]
     fig.add_trace(go.Scatter(x=fx + fx[::-1], y=hi + lo[::-1], fill="toself", fillcolor="rgba(59,156,155,0.12)",
                              line=dict(width=0), hoverinfo="skip", name="rollout 10-90%", showlegend=False))
+    fst = src.get("future_stage", tl.get("future_stage") or [[0] * len(fut)] * len(tl["risk"]))[cursor]
     fig.add_trace(go.Scatter(x=[x[cursor]] + fx, y=[src["risk"][cursor] if "risk" in src else tl["risk"][cursor]]
-                             + fut, mode="lines+markers", name="300 s rollout",
-                             line=dict(color=ACCENT, width=1.5, dash="dash"), opacity=0.7,
-                             marker=dict(size=4, color=ACCENT)))
+                             + fut, mode="lines", name="300 s rollout",
+                             line=dict(color=ACCENT, width=1.5, dash="dash"), opacity=0.7))
+    fig.add_trace(go.Scatter(x=fx, y=fut, mode="markers+text", showlegend=False,
+                             marker=dict(size=8, color=[STAGE_COLORS[s] for s in fst],
+                                         line=dict(width=1, color="#E6E6E6")),
+                             text=[SHORT[s] if s else "" for s in fst], textposition="top center",
+                             textfont=dict(size=9, color="#C9CDD2"),
+                             hovertemplate="+%{x:.0f} min forecast: %{text}<br>P(attack) %{y:.0%}<extra></extra>"))
 
     fig.add_hline(y=thr, line=dict(color=MUTED, width=1, dash="dash"),
                   annotation_text=f"alert threshold {thr:.2f}", annotation_position="top left",
