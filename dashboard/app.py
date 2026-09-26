@@ -114,14 +114,22 @@ def file_intake(kind: str) -> None:
 
 
 def summary_strip(ov: dict) -> None:
-    cols = st.columns(6)
-    alert = next((hh for hh in ov["hosts"] if hh["first_alert_step"] is not None), None)
+    """Static facts about the file only - nothing the replay has not reached yet (causal)."""
+    cols = st.columns(4)
     cols[0].metric("file", ov["filename"][:22])
     cols[1].metric("flows", f"{ov['n_flows']:,}")
     cols[2].metric("hosts", ov["n_hosts"])
     cols[3].metric("duration", f"{ov['n_steps'] * ov['window_s'] // 60} min")
-    cols[4].metric("first alert", f"t+{alert['first_alert_step'] * ov['window_s'] // 60} min" if alert else "none")
-    cols[5].metric("alerting hosts", sum(1 for hh in ov["hosts"] if hh["first_alert_step"] is not None))
+
+
+def causal_status(ov: dict, cur: int) -> None:
+    """Alert counters as of the replay cursor - alerts in the future are not revealed."""
+    seen = [hh for hh in ov["hosts"] if hh["first_alert_step"] is not None and hh["first_alert_step"] <= cur]
+    first = min((hh["first_alert_step"] for hh in seen), default=None)
+    cols = st.columns(3)
+    cols[0].metric("replay time", f"t+{cur * ov['window_s'] // 60} min")
+    cols[1].metric("first alert", f"t+{first * ov['window_s'] // 60} min" if first is not None else "none yet")
+    cols[2].metric("alerting hosts so far", len(seen))
 
 
 def replay_controls(n: int) -> None:
@@ -173,6 +181,7 @@ def replay_body() -> None:
 
     replay_controls(n)
     cur = S.cursor
+    causal_status(ov, cur)
     t_min = cur * ov["window_s"] // 60
     left, right = st.columns([1.05, 1])
     with left:
@@ -273,7 +282,11 @@ def file_mode(kind: str) -> None:
     run_every = SPEEDS[S.speed] if S.playing else None
     st.fragment(run_every=run_every)(replay_body)()
 
-    with st.expander("All hosts (forecast peaks)", expanded=False):
+    with st.expander("All hosts (whole-file summary)", expanded=False):
+        if S.cursor < ov["n_steps"] - 1:
+            st.caption("Available when the replay reaches the end - it summarises the whole file, "
+                       "including alerts the replay has not reached yet.")
+            return
         df = pd.DataFrame(ov["hosts"])
         df["first_alert_min"] = df["first_alert_step"].map(lambda v: None if pd.isna(v) else int(v) * ov["window_s"] // 60)
         st.dataframe(df[["host", "peak", "stage_name", "first_alert_min", "flows"] +
