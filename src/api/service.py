@@ -210,7 +210,7 @@ class Service:
             peak_curve = s["future"].max(1)
             al = _alert_step(peak_curve, thr, self.E.alert_n)
             i_peak = int(np.argmax(peak_curve))
-            stg = map_stage(peak_curve[i_peak], s["stage_probs"][i_peak].max(0), thr)
+            stg = map_stage(peak_curve[i_peak], s["stage_probs"][i_peak].mean(0), thr)
             hosts.append({"host": h, "peak": round(float(peak_curve.max()), 4),
                           "first_alert_step": al, "stage": stg, "stage_name": stage_names()[stg],
                           "flows": int(s["traffic"]["out_flows"].sum() + s["traffic"]["in_flows"].sum()),
@@ -238,7 +238,7 @@ class Service:
         thr = self.E.threshold
         s = self.host_series(a, host)
         peak_curve = s["future"].max(1)
-        stage_seq = map_sequence(peak_curve, s["stage_probs"].max(1), thr)
+        stage_seq = map_sequence(peak_curve, s["stage_probs"].mean(1), thr)
         stage_now = [map_stage(r, sp[0], thr) for r, sp in zip(s["now"], s["stage_probs"])]
         al = _alert_step(peak_curve, thr, self.E.alert_n)
         t0 = a.fm.meta["t0"]
@@ -304,7 +304,7 @@ class Service:
         edges = branch["edges"] if branch else a.fm.edges
         rows = frame["window"].to_numpy() == a.steps[0] + step
         risk = dict(zip(frame["host"].to_numpy()[rows], fc["future"][rows].max(1)))
-        stage_p = dict(zip(frame["host"].to_numpy()[rows], fc["stage_future_probs"][rows].max(1)))
+        stage_p = dict(zip(frame["host"].to_numpy()[rows], fc["stage_future_probs"][rows].mean(1)))
         roles = roles_at(edges, a.steps[0] + step, risk, self.E.threshold)
         mitigated = set()
         if branch:
@@ -325,7 +325,7 @@ class Service:
         s = self.host_series(a, host)
         pos = np.flatnonzero(s["pos"] == step)
         peak = float(s["future"][step].max())
-        stage = map_stage(peak, s["stage_probs"][step].max(0), thr)
+        stage = map_stage(peak, s["stage_probs"][step].mean(0), thr)
         w = a.steps[0] + step
         risk_all = {}
         rows = a.frame["window"].to_numpy() == w
@@ -461,7 +461,7 @@ class Service:
                 "risk": [round(float(v), 4) for v in peak],
                 "future": np.round(s["future"], 4).tolist(), "lo": np.round(s["lo"], 4).tolist(),
                 "hi": np.round(s["hi"], 4).tolist(),
-                "stage": map_sequence(peak, s["stage_probs"].max(1), thr),
+                "stage": map_sequence(peak, s["stage_probs"].mean(1), thr),
                 "future_stage": self.future_stages(s),
                 "traffic": {k: v.astype(int).tolist() for k, v in s["traffic"].items()}}
 
