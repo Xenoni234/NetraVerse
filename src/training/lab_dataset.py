@@ -40,8 +40,10 @@ def load_schedule() -> list[dict]:
     return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
 
 
-def label_flows(flows: pd.DataFrame, schedule: list[dict]) -> pd.DataFrame:
+def label_flows(flows: pd.DataFrame, schedule: list[dict], clock_offset: float = 0.0) -> pd.DataFrame:
+    """clock_offset = sensor clock minus the clock that wrote the schedule (seconds)."""
     flows = flows.copy()
+    schedule = [{**s, "start": s["start"] + clock_offset, "end": s["end"] + clock_offset} for s in schedule]
     flows["label"] = "BENIGN"
     for s in schedule:
         m = (flows["src_ip"] == s["attacker"]) & (flows["ts_end"] >= s["start"]) & \
@@ -52,7 +54,7 @@ def label_flows(flows: pd.DataFrame, schedule: list[dict]) -> pd.DataFrame:
     return flows
 
 
-def build() -> dict:
+def build(clock_offset: float = 0.0) -> dict:
     caps = sorted(list(LAB.glob("*.pcap")) + list(LAB.glob("*.pcapng")))
     if not caps:
         raise FileNotFoundError(f"No captures in {LAB}")
@@ -60,7 +62,7 @@ def build() -> dict:
     w = world_model_config()["windowing"]
     frames, edges, stats = [], [], []
     for cap in caps:
-        flows = label_flows(pcap_to_flows(cap), schedule)
+        flows = label_flows(pcap_to_flows(cap), schedule, clock_offset)
         fm = windowize(flows, window_s=w["window_s"], min_flows=5, max_hosts=w["max_hosts"], source="lab")
         df = fm.frame
         df.insert(0, "capture", cap.stem)
@@ -81,6 +83,8 @@ def build() -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stats", action="store_true")
+    ap.add_argument("--clock-offset", type=float, default=0.0,
+                    help="sensor clock minus schedule-writer clock, seconds (laptop vs dashboard PC: ~3.7)")
     a = ap.parse_args()
     if a.stats:
         sch = load_schedule()
@@ -88,7 +92,7 @@ def main() -> None:
             print(f"{s['label']:<14} {s['attacker']} -> {','.join(s.get('targets') or ['*'])} "
                   f"{s['end'] - s['start']:.0f}s")
         return
-    print(json.dumps(build(), indent=2, default=str))
+    print(json.dumps(build(a.clock_offset), indent=2, default=str))
 
 
 if __name__ == "__main__":
