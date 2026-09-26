@@ -54,7 +54,8 @@ def reset_replay(keep_file: bool = True) -> None:
             pass
     S.update(cursor=0, playing=False, decided=False, result=None, branch=None, pending_ctx=None)
     if S.ov and S.focus:
-        S.decision_step = get_tl(S.focus)["first_alert_step"]
+        S.decision_step = S.ov["decision_step"]          # file-wide first sustained alert
+        S.decision_host = S.ov["focus_host"]
 
 
 def get_tl(host: str) -> dict:
@@ -164,6 +165,8 @@ def replay_body() -> None:
         else:
             S.playing = False
     if (S.decision_step is not None and not S.decided and S.cursor == S.decision_step and S.pending_ctx is None):
+        S.focus = S.get("decision_host") or S.focus       # jump to the alerting host
+        S.branch = None
         S.pending_ctx = api.decision_context(S.aid, S.focus, S.cursor)
         S.playing = False
         st.rerun()                          # stop the timer; the decision panel takes over
@@ -187,8 +190,6 @@ def replay_body() -> None:
         if clicked and clicked != S.focus and clicked in {hh["host"] for hh in ov["hosts"]}:
             S.focus = clicked
             S.branch = None
-            if not S.decided:
-                S.decision_step = get_tl(clicked)["first_alert_step"]
             st.rerun()
     with right:
         tlf = get_tl(S.focus)
@@ -285,8 +286,6 @@ def file_mode(kind: str) -> None:
         if pick != S.focus:
             S.focus = pick
             S.branch = None
-            if not S.decided:
-                S.decision_step = get_tl(pick)["first_alert_step"]
             st.rerun()
 
 
