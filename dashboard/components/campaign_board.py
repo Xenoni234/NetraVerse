@@ -21,7 +21,7 @@ def campaign_board(hosts: list[dict], threshold: float, window_s: int,
         host = h["host"]
         is_c = host in contained
         stg = int(h.get("stage", 0))
-        col = STAGE_COLORS.get(stg, "#9AA0A6")
+        col = STAGE_COLORS[stg] if 0 <= stg < len(STAGE_COLORS) else "#9AA0A6"
         peak = h.get("peak", 0.0)
         al = h.get("first_alert_step")
         when = f"t+{al * window_s // 60} min" if al is not None else "-"

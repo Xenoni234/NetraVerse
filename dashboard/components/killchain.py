@@ -21,7 +21,7 @@ def kill_chain(reached: int, forecast: int | None = None, title: str = "MITRE AT
     """reached = highest labelled/observed stage; forecast = stage the model projects next."""
     cells = []
     for i, (name, tid, remedy) in enumerate(STAGES[1:], start=1):
-        col = STAGE_COLORS.get(i, "#9AA0A6")
+        col = STAGE_COLORS[i] if i < len(STAGE_COLORS) else "#9AA0A6"
         on = i <= (reached or 0)
         nxt = forecast is not None and i == forecast and not on
         bg = f"{col}22" if on else ("#20242688" if nxt else "transparent")
