@@ -42,15 +42,17 @@ def _probe(target: str, port: int, timeout: float = 0.4) -> None:
         s.close()
 
 
-def recon(target: str, seconds: int) -> None:
-    """Slow port sweep - the precursor a forecaster should catch before the brute force."""
-    print(f"[recon] slow sweep of {target} for {seconds}s", flush=True)
+def recon(target: str, seconds: int, rate: float = 0.05) -> None:
+    """Port sweep (the reconnaissance precursor). ``rate`` is the delay between probes; the
+    default ~20 ports/s is an ordinary nmap-speed scan -> a clear fan-out / port-entropy spike
+    the forecaster can catch minutes before the brute force."""
+    print(f"[recon] sweep of {target} for {seconds}s at ~{1 / max(rate, 1e-3):.0f} ports/s", flush=True)
     t_end = time.time() + seconds
     port = 1
     while time.time() < t_end:
-        _probe(target, port)
+        _probe(target, port, timeout=0.25)
         port = port + 1 if port < 1024 else 1
-        time.sleep(0.7)
+        time.sleep(rate)
 
 
 def brute_force(target: str, port: int, seconds: int) -> None:

@@ -125,6 +125,7 @@ def train(cfg: dict, datasets: list[str], use_gnn: bool, tag: str, epochs: int |
     print(f"[sampler] groups={grp.value_counts().to_dict()} pos_frac={pos:.3f} pos_weight={pos_weight:.2f}",
           flush=True)
     onset_boost = tr["onset_boost"]
+    recon_boost = tr.get("recon_boost", 0.0)          # emphasise low-volume reconnaissance windows
     val_ds = data.frame["dataset"].to_numpy()[val_starts]
     for ep in range(n_ep):
         model.train()
@@ -133,7 +134,9 @@ def train(cfg: dict, datasets: list[str], use_gnn: bool, tag: str, epochs: int |
         for i in range(0, len(perm), tr["batch"]):
             x, nb, ry, sy = D.gather(data, perm[i:i + tr["batch"]], cfg["data"]["packet_mask_dropout"], rng)
             onset = (ry[:, :L].max(1) == 0) & (ry[:, L:].max(1) > 0)
-            sw = torch.as_tensor(1.0 + onset_boost * onset, dtype=torch.float32, device=dev)
+            recon_fut = (sy[:, L:] == 1).any(1)        # reconnaissance in the forecast horizon
+            sw = torch.as_tensor(1.0 + onset_boost * onset + recon_boost * recon_fut,
+                                 dtype=torch.float32, device=dev)
             out = model.loss(torch.as_tensor(x, device=dev), torch.as_tensor(nb, device=dev),
                              torch.as_tensor(ry, device=dev), torch.as_tensor(sy, device=dev),
                              L, K, pos_weight, sw)

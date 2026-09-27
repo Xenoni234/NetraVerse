@@ -69,6 +69,9 @@ def sequence_starts(frame: pd.DataFrame, T: int) -> tuple[np.ndarray, np.ndarray
     wmin = frame.groupby(["dataset", "capture"])["window"].transform("min").to_numpy()
     block = (frame["window"].to_numpy() - wmin) // BLOCK_WINDOWS
     split = CYCLE[(block + cap_code) % len(CYCLE)]
+    # The small custom lab captures are shorter than one split block, so they can't serve as a
+    # held-out block: put all `lab` sequences in TRAIN and hold out a separate `lab_test` capture.
+    split = np.where(frame["dataset"].to_numpy() == "lab", 0, split)
     same_block = block[idx] == block[idx + T - 1]
     ok = same & same_block
     return idx[ok], split[idx[ok]]
@@ -101,7 +104,14 @@ def build(datasets: list[str], history: int, horizon: int, scaler: FeatureScaler
     stage = fill_episode_gaps(frame, episode_gap)
     frame = frame.assign(stage=stage)
     meta = frame[["dataset", "capture", "host", "segment", "window", "t", "stage", "attack_out"]]
-    return SeqData(meta, x, nb, (stage > 0).astype(np.float32), stage, parts, scaler, T)
+    # Positive target = COMPROMISE (not reconnaissance). Recon (stage 1) is a precursor: a
+    # sequence with recon in its history and a compromise in its horizon is a real "attack
+    # coming" example, so the model learns to forecast the compromise DURING recon -> lead time
+    # (R20). ``compromise_stages`` defaults to all attack stages for backward compatibility.
+    from src.utils.config import world_model_config
+    comp = world_model_config()["data"].get("compromise_stages", [1, 2, 3, 4, 5, 6])
+    risk = np.isin(stage, np.asarray(comp)).astype(np.float32)
+    return SeqData(meta, x, nb, risk, stage, parts, scaler, T)
 
 
 def gather(data: SeqData, starts: np.ndarray, mask_dropout: float = 0.0,

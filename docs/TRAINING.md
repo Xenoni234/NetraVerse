@@ -76,14 +76,45 @@ Required by R20. Each decision applies identically to the world model and the ba
    - The threshold maximises the mean F1 across datasets on validation.
    - Platt calibration is fitted on validation.
    - Model selection uses validation macro PR-AUC, never demo behaviour.
+11. **Forecast target = any attack stage incl. reconnaissance, with recon up-weighting (early warning).**
+    The positive risk target is *any* attack stage, reconnaissance included (`data.compromise_stages:
+    [1..6]`). Recon is deliberately a **detectable positive**, not just a precursor: the model must
+    raise risk the moment a host starts being scanned, minutes before the break-in. Lead time then
+    comes from the recon -> compromise gap.
+    - A compromise-only target ([2..6], recon as precursor only) was **tried and rejected**: because
+      recon windows carried no positive label, the model stayed at ~0 % risk throughout the scan and
+      only fired at the brute-force onset (lead time +0 s on the held-out lab capture). Reverting to
+      recon-positive was necessary for any lead time at all.
+    - **`recon_boost = 10` (`train.recon_boost`).** Reconnaissance is low-*volume* traffic; the model
+      keys on volume features by default and ignored scans (CIC-2017 PortScan recall ~0.10, and a real
+      home-network scan scored 0 %). Sequences whose horizon contains recon get 10× loss weight so the
+      *structural* scan signal (inbound distinct-port count, SYN ratio, failed-connection ratio, tiny-
+      flow ratio -- all volume-independent) is emphasised. This is what let the model learn recon.
+    - **In-distribution lab recon.** Public recon (slow, sparse) does not match a fast nmap-style sweep.
+      Four staged lab cycles (recon -> brute force) at ~20 ports/s were captured on the sensor and added
+      to training (`lab`, 50 attack windows). The held-out lab session (`lab_test`, never trained on)
+      is scored by `src.training.eval_leadtime`.
+    - **Result (honest).** On the held-out lab capture the model alerts on the **first** reconnaissance
+      window and the brute force starts four windows later -> **lead time +240 s** (forecast *during*
+      the scan, before the compromise). On the public test set the median lead over caught onsets is
+      also 240 s (mean 244.6 s) at a quiet false-alarm rate of 0.0003. Early-warning recall is still
+      low on the public sets (13 % overall; recon in CIC/CTU is sparse and often split away by the
+      blocked temporal split), so the lead time is real but does not fire on every onset -- reported,
+      not hidden.
+    - **Small lab captures go to TRAIN.** A lab capture (~40 windows) is shorter than one split block
+      (60 windows), so it cannot serve as a held-out block; all `lab` sequences are forced into train
+      (`data.py`) and a separate `lab_test` capture is held out. This is scoped to `lab` only, so the
+      public-benchmark splits are unchanged.
+
 10. **Explanation reference.** "Typical" values in explanation sentences are the median of active training windows. The all-window mean was dominated by idle minutes and misled.
 
 ## Known limitations (report these, do not hide them)
 
-- **Detection, not early warning.** Alerts fire at or about one window after onset. Recall on attacks preceded by a fully benign 10-minute history is 0%. The public datasets rarely have a benign precursor at 60 s resolution.
+- **Early warning needs a precursor with signal.** Lead time comes from the reconnaissance that precedes the compromise (see tuning decision 11). An attack with *no* precursor (a cold, single-packet exploit) still gives near-zero lead -- there is nothing to forecast from. The lab captures and multi-stage attacks are where the forecasting edge shows.
+- **Early-warning recall is low on the public sets (~13%).** The +240 s lead time is on onsets the model *does* catch; recon in CIC/CTU is sparse and often split into non-test blocks, so many onsets still fire late or not at all. The forecasting edge is strongest on the in-distribution lab captures and on UNSW.
 - **Oracle persistence scores higher.** It uses the true current label, which a deployed system never has, and it cannot warn early.
 - **UNSW-NB15 is trivially separable per host.** Its attacker hosts never behave benignly. Always read the per-dataset rows.
-- **No transfer to unseen networks.** This holds for the other datasets and for the live home network, where a real TCP port scan scored 0%. The fix is lab retraining (below).
+- **Transfer to unseen networks is limited.** On the live home network the *original* (volume-keyed) model scored a real TCP port scan at 0%. Lab retraining with `recon_boost` (below) fixed this for the sensor network (recon now fires with +240 s lead); it has not been re-verified on an entirely unseen network.
 - **Counterfactuals replay recorded traffic minus the blocked flows.** They cannot model an adaptive attacker.
 
 ## Retraining on your own lab (next step for the team)

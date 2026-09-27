@@ -9,12 +9,17 @@ windowing:
   max_hosts: 200        # top-200 hosts by activity per capture (label-agnostic)
 
 data:
-  train_datasets: [cic2017, cic2018, ctu13, unsw]
+  train_datasets: [cic2017, cic2018, ctu13, unsw, lab]
   split: [0.6, 0.2, 0.2]       # chronological inside every capture, never random (R1/R4)
   idle_keep: 0.15              # keep 15% of all-quiet benign sequences in TRAINING only (class balance)
-  packet_mask_dropout: 0.5
+  packet_mask_dropout: 0.5     # randomly hide packet-level features so CSV and PCAP inputs both work
   capture_norm: false          # per-capture robust normalisation (R4 experiment, see cross_dataset_cn)
-  episode_gap: 5               # attack windows <=5 quiet minutes apart = one attack episode (R20)     # randomly hide packet-level features so CSV and PCAP inputs both work
+  episode_gap: 5               # attack windows <=5 quiet minutes apart = one attack episode (R20)
+  # Positive risk target = any attack stage INCLUDING reconnaissance, so the model raises the
+  # alarm while the host is still scanning (the recon phase) - minutes before the break-in. The
+  # stage head still forecasts the coming compromise stage, so the alert is early relative to the
+  # actual compromise (lead time = recon -> brute-force gap). Set to [2..6] to require a compromise.
+  compromise_stages: [1, 2, 3, 4, 5, 6]
 
 model:
   embed: 128
@@ -40,6 +45,7 @@ train:
   risk_pos_weight_cap: 20.0   # BCE pos_weight = min(cap, neg/pos) - class balancing (R1)
   patience: 4
   onset_boost: 4.0            # extra weight on "benign now, attack within 300 s" sequences (early warning)
+  recon_boost: 10.0           # extra weight on windows with reconnaissance in the horizon (low-volume scan signal)
 
 eval:
   alert_consecutive: 2        # sustained alert = 2 consecutive windows over threshold
