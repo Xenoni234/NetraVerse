@@ -280,6 +280,20 @@ def detection_banner(tl: dict, cur: int) -> None:
     st.html(f"<div class='nv-card nv-banner'><div class='nv-h'>Detection</div>{' '.join(parts)}</div>")
 
 
+def report_button(fetch, key: str) -> None:
+    """Two-step download so a live 4 s refresh does not regenerate the PDF every tick."""
+    c1, c2 = st.columns([1, 3])
+    if c1.button("Generate incident report (PDF)", key=f"{key}-gen", use_container_width=True):
+        try:
+            S[f"{key}-pdf"] = fetch()
+        except api.ApiError as e:
+            st.warning(f"Report unavailable - {e}")
+    if S.get(f"{key}-pdf"):
+        c2.download_button("Download incident report (PDF)", S[f"{key}-pdf"],
+                           file_name="netraverse_report.pdf", mime="application/pdf",
+                           key=f"{key}-dl", use_container_width=True)
+
+
 def file_mode(kind: str) -> None:
     file_intake(kind)
     if not S.ov:
@@ -289,6 +303,7 @@ def file_mode(kind: str) -> None:
     summary_strip(ov)
     run_every = SPEEDS[S.speed] if S.playing else None
     st.fragment(run_every=run_every)(replay_body)()
+    report_button(lambda: api.report_pdf(S.aid), key="rep-file")
 
     with st.expander("All hosts (whole-file summary)", expanded=False):
         if S.cursor < ov["n_steps"] - 1:
@@ -393,6 +408,7 @@ def live_body() -> None:
                                         "applied": a["enforcement"].get("applied"),
                                         "message": a["enforcement"].get("message")} for a in stt["actions"]]),
                          hide_index=True, use_container_width=True)
+    report_button(api.live_report_pdf, key="rep-live")
 
 
 def live_mode() -> None:

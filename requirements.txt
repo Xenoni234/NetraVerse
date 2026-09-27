@@ -9,6 +9,7 @@ pandas==3.0.5
 polars==1.44.2
 pyarrow==25.0.1
 scapy==2.7.0
+fpdf2==2.8.8
 networkx==3.6.1
 fastapi==0.141.1
 uvicorn==0.53.0

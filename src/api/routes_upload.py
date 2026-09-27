@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from src.api.schemas import DecisionRequest, Driver, Timeline, Topology, UploadResponse
 from src.api.service import get_service
@@ -64,6 +65,15 @@ def upload_path(path: str):
 @router.get("/{aid}", response_model=UploadResponse)
 def overview(aid: str):
     return get_service().overview(_get(aid))
+
+
+@router.get("/{aid}/report")
+def report(aid: str):
+    from src.reporting.incident_report import build_pdf
+    a = _get(aid)
+    pdf = build_pdf(get_service(), a, title=a.filename or "Upload")
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="netraverse_report_{aid}.pdf"'})
 
 
 @router.get("/{aid}/timeline", response_model=Timeline)

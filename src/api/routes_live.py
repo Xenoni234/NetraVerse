@@ -5,6 +5,7 @@ import os
 import threading
 
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import Response
 
 from src.api.schemas import DecisionRequest
 from src.api.service import get_service
@@ -68,6 +69,19 @@ def state():
     top = [h["host"] for h in sorted(ov["hosts"], key=lambda h: -h["peak"])[:12]]
     return {"status": m.status(), "overview": ov, "last_step": len(a.steps) - 1,
             "series": {h: list(m.history.get(h, [])) for h in top}, "actions": m.actions}
+
+
+@router.get("/report")
+def report():
+    from src.reporting.incident_report import build_pdf
+    m = monitor()
+    a = m.latest
+    if a is None:
+        raise HTTPException(409, "No live data yet.")
+    pdf = build_pdf(get_service(), a, title=f"Live sensor {m.iface or m.replay or ''}",
+                    decisions=list(m.actions))
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="netraverse_live_report.pdf"'})
 
 
 @router.get("/topology")

@@ -25,6 +25,20 @@ def _ok(r: httpx.Response):
     return r.json()
 
 
+def _pdf(r: httpx.Response) -> bytes:
+    if r.status_code >= 400:
+        raise ApiError(f"{r.status_code}: report unavailable")
+    return r.content
+
+
+def report_pdf(aid: str) -> bytes:
+    return _pdf(_client.get(f"/upload/{aid}/report"))
+
+
+def live_report_pdf() -> bytes:
+    return _pdf(_client.get("/live/report"))
+
+
 def health() -> dict | None:
     try:
         return _ok(_client.get("/health", timeout=3))
