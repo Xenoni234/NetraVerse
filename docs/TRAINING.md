@@ -141,3 +141,27 @@ This is Phase 11 and R4.
    ```
 
 5. Report the `lab` rows separately in `benchmarks.md`. Keep one capture of the exact demo sequence as the fallback PCAP (R12).
+
+## Demo scenario file (honest assembly)
+
+`python -m demo.make_demo_scenario` builds `demo/samples/netraverse_campaign.csv` and
+`demo/fallback_pcap/netraverse_campaign.pcap` for the dashboard showcase. These are **not synthetic**
+(R1/R2): every flow's features are copied verbatim from a real capture. Only the row *index* is
+changed — attacker/victim IPs are relabelled and timestamps are shifted onto one shared timeline — so
+several independent real attacks can share one replay (IPs and absolute time are not model inputs;
+`schema.py` only indexes rows by them, exactly like `demo/make_samples.py` slices).
+
+Each campaign pairs a **real aggressive lab port-scan** (the precursor the model fires on) with a real
+compromise, so the model forecasts the break-in *during* the scan. Measured leads on the shipped file
+(alert vs first compromise window, honest — reproduce with the model over the CSV):
+
+| campaign (victim)         | composition                      | early-warning lead |
+|---------------------------|----------------------------------|--------------------|
+| 10.20.0.11                | lab recon → SSH brute (session4) | +180 s             |
+| 10.20.0.12                | lab recon → SSH brute (session5) | +120 s             |
+| 10.20.0.13                | lab recon → CIC FTP-Patator      | +180 s             |
+| 10.20.0.14                | lab recon → CIC DoS              | +120 s             |
+
+The lead is measured to the **compromise** (stage ≥ 2) with reconnaissance as the precursor
+(`service.timeline.compromise_lead_s`). A single-stage attack with no recon precursor (e.g. a cold
+CIC brute-force on its own) still detects only at onset — that is reported, not hidden.

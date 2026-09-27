@@ -2,6 +2,28 @@
 
 The story arc: baseline → attack escalation → detection with explanation → decision → re-rollout showing the risk drop.
 
+## 0. SIH recording click-path (the reliable version — bundled, offline)
+
+Use the assembled multi-attack campaign so several real attacks run at once and mitigating one leaves
+the others for the camera. Regenerate the files (once) with `python -m demo.make_demo_scenario`.
+
+1. **CSV Upload → `netraverse_campaign.csv` → Analyse.** Press **▶ Play** (2x).
+2. Four campaigns forecast the compromise **during reconnaissance** (real +120–180 s lead). At the first
+   sustained alert playback pauses; the **detection banner** reads *"Forecast the compromise … before it
+   began — raised during reconnaissance."* The **MITRE kill-chain strip**, **campaign board** (all four
+   attacks) and **what-if** menu are shown below the 3D graph.
+3. Click **Accept** on the recommended **block** → the **outcome comparison** and re-rollout show the
+   risk collapse for that host; the **campaign board** still lists the other three attacks alerting.
+4. Click **Generate incident report (PDF) → Download** for the one-page incident report.
+5. (Optional) **PCAP Upload → `netraverse_campaign.pcap`** shows the full packet→flow→forecast pipeline
+   with two concurrent attackers.
+
+**Live (phone) segment:** enter any **Operator token** (unlocks Live Monitor) → **Start sensor** →
+scan `192.168.0.201` from the phone (`nmap -p 1-1024 -T4 192.168.0.201`) → the alert fires during recon
+→ **Accept "Block all traffic from &lt;phone&gt;"** → status shows **contained**, the attacker node stays
+on the graph (green), and the forecast line **drops** within a tick. Optionally arm **Auto-contain** for
+the autonomous version.
+
 ## A. File replay (always works, offline)
 
 1. Start the backend with `uvicorn src.api.main:app --port 8000`. Then start the dashboard with `streamlit run dashboard/app.py`.
