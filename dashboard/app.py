@@ -358,11 +358,21 @@ def live_body() -> None:
                     S.live_error = None
                 except api.ApiError as e:
                     S.live_error = str(e)
+                    S.live_result = None
             if S.get("live_error"):                     # persists across the 4 s refreshes
                 st.error(f"Decision not applied - {S.live_error}")
         else:
             drivers_block(api.live_explain(S.live_focus), "Current drivers (integrated gradients)")
         if S.get("live_result"):
+            enf = S.live_result.get("enforcement", {})
+            lbl = S.live_result.get("action", {}).get("label", "action")
+            if enf.get("applied"):
+                st.success(f"✅ Applied on the sensor — {lbl}. {enf.get('message', '')}")
+            elif S.live_result.get("choice") == "reject":
+                st.info(f"Rejected — no containment applied. {enf.get('message', '')}")
+            else:
+                st.warning(f"⚠️ Not enforced — {lbl}. {enf.get('message', '')} "
+                           "The projected effect of the block is simulated below.")
             counterfactual_panel(S.live_result)
             if series:
                 mb = S.live_result.get("measured_before")
@@ -376,6 +386,11 @@ def live_body() -> None:
 
 
 def live_mode() -> None:
+    if not (S.get("op_token") or "").strip():
+        st.warning("**Live Monitor is locked.** Enter the **Operator token** in the sidebar to open the "
+                   "live sensor. The token authorises containment: Accept / Modify apply a real firewall "
+                   "rule on the sensor (FR17), so the console will not open without it.")
+        return
     c1, _ = st.columns([1, 5])
     if c1.button("Start sensor", type="primary"):
         try:

@@ -28,9 +28,17 @@ def status() -> dict:
 
 
 def _check_token(token: str | None) -> None:
+    """Real enforcement needs an operator token (FR17/R13). Two modes:
+    - a sensor secret is configured (NV_OPERATOR_TOKEN): the header must match it exactly;
+    - no secret configured: any non-empty operator token is accepted (proves an operator is
+      present and driving the console), but a missing/blank token is still refused.
+    The dashboard also gates the whole Live Monitor behind entering a token."""
     need = os.environ.get("NV_OPERATOR_TOKEN")
-    if need and token != need:
-        raise HTTPException(403, "Operator token required for real enforcement.")
+    if need:
+        if token != need:
+            raise HTTPException(403, "Operator token does not match the sensor's NV_OPERATOR_TOKEN.")
+    elif not (token and token.strip()):
+        raise HTTPException(403, "Operator token required to apply a containment action.")
 
 
 @router.post("/start")
