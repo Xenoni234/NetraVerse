@@ -25,6 +25,10 @@ from dashboard.components.state_graph import STAGE_COLORS, state_graph  # noqa: 
 from dashboard.components.decision_panel import decision_panel, drivers_block  # noqa: E402
 from dashboard.components.probability_timeline import live_figure, timeline_figure  # noqa: E402
 from dashboard.components.topology_view import topology_view  # noqa: E402
+from dashboard.components.killchain import kill_chain  # noqa: E402
+from dashboard.components.campaign_board import campaign_board  # noqa: E402
+from dashboard.components.event_feed import event_feed  # noqa: E402
+from dashboard.components.narration_panel import narration_panel  # noqa: E402
 
 st.set_page_config(page_title="NetraVerse", page_icon=":material/lan:", layout="wide",
                    initial_sidebar_state="expanded")
@@ -303,6 +307,10 @@ def file_mode(kind: str) -> None:
     summary_strip(ov)
     run_every = SPEEDS[S.speed] if S.playing else None
     st.fragment(run_every=run_every)(replay_body)()
+    foc = next((h for h in ov["hosts"] if h["host"] == S.focus), None)
+    if foc:
+        kill_chain(reached=int(foc.get("stage", 0)), forecast=int(foc.get("stage", 0)))
+    campaign_board(ov["hosts"], ov["threshold"], ov["window_s"])
     report_button(lambda: api.report_pdf(S.aid), key="rep-file")
 
     with st.expander("All hosts (whole-file summary)", expanded=False):
@@ -408,6 +416,16 @@ def live_body() -> None:
                                         "applied": a["enforcement"].get("applied"),
                                         "message": a["enforcement"].get("message")} for a in stt["actions"]]),
                          hide_index=True, use_container_width=True)
+    # ---- full-width panels below the topology (fill the space) ----
+    cur = next((hh for hh in hosts if hh["host"] == S.live_focus), hosts[0])
+    kill_chain(reached=int(cur.get("stage", 0)), forecast=int(cur.get("stage", 0)))
+    contained = set(status.get("neutralized") or []) | set(status.get("contained") or [])
+    b1, b2 = st.columns([1.3, 1])
+    with b1:
+        campaign_board(hosts, ov["threshold"], ov["window_s"], contained=contained)
+    with b2:
+        event_feed(hosts, stt.get("actions", []), ov["window_s"])
+    narration_panel(lambda: api.live_narration(S.live_focus))
     report_button(api.live_report_pdf, key="rep-live")
 
 

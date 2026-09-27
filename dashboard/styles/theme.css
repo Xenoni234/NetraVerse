@@ -50,3 +50,6 @@ h1, h2, h3 { font-weight: 500 !important; letter-spacing: 0 !important; }
 .nv-banner { border-left: 3px solid var(--nv-atk); }
 .nv-banner.ok { border-left-color: var(--nv-ok); }
 .nv-fc span.nv-stage { display: inline-block; font: 11px var(--nv-mono); padding: 1px 6px; margin: 2px 4px 2px 0; border: 1px solid var(--nv-border); border-radius: 2px; }
+.nv-board { width: 100%; border-collapse: collapse; font-size: 12px; }
+.nv-board th { text-align: left; color: var(--nv-muted, #8a9095); font-weight: 600; font-size: 11px; padding: 4px 8px; border-bottom: 1px solid var(--nv-border); }
+.nv-board td { padding: 5px 8px; border-top: 1px solid var(--nv-border); vertical-align: middle; }

@@ -165,4 +165,5 @@ class LiveMonitor:
         return {"running": bool(self.started), "iface": self.iface, "replay": self.replay,
                 "ticks": self.ticks, "packets": self.gen.packets, "flows_buffered": len(self.ring.df),
                 "tick_s": self.tick_s, "last_tick_ms": self.last_tick_ms, "error": self.last_error,
-                "contained": sorted(self.contained_sources())}
+                "contained": sorted(self.contained_sources()),
+                "neutralized": sorted(getattr(self, "_neutralized", set()))}
