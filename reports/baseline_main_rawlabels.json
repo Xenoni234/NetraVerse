@@ -1,0 +1,107 @@
+{
+  "tag": "main",
+  "datasets": [
+    "cic2017",
+    "cic2018",
+    "ctu13",
+    "unsw"
+  ],
+  "logreg": {
+    "forecast_300s": {
+      "precision": 0.9897,
+      "recall": 0.5599,
+      "f1": 0.7152,
+      "fpr": 0.0001,
+      "pr_auc": 0.6611,
+      "threshold": 0.99099,
+      "tp": 1533,
+      "fp": 16,
+      "fn": 1205,
+      "tn": 163880,
+      "positives": 2738,
+      "n": 166634
+    },
+    "early_warning": {
+      "onsets": 194,
+      "early_warning_recall": 0.0,
+      "quiet_false_alarm_rate": 8e-05,
+      "median_lead_s": null,
+      "mean_lead_s": null
+    },
+    "shap_top_features": [
+      {
+        "feature": "out_bytes",
+        "label": "outbound bytes",
+        "mean_abs_shap": 24.3929
+      },
+      {
+        "feature": "out_mean_pkt_size",
+        "label": "mean outbound packet size",
+        "mean_abs_shap": 15.9336
+      },
+      {
+        "feature": "out_pkts",
+        "label": "outbound packets",
+        "mean_abs_shap": 9.9115
+      },
+      {
+        "feature": "ttl_mean_mask",
+        "label": "TTL observed",
+        "mean_abs_shap": 3.0669
+      },
+      {
+        "feature": "retrans_rate",
+        "label": "retransmission rate",
+        "mean_abs_shap": 2.8671
+      },
+      {
+        "feature": "ttl_mean",
+        "label": "mean packet TTL",
+        "mean_abs_shap": 2.4243
+      },
+      {
+        "feature": "out_tcp_frac",
+        "label": "TCP share of outbound flows",
+        "mean_abs_shap": 2.2913
+      },
+      {
+        "feature": "retrans_rate_mask",
+        "label": "retransmissions observed",
+        "mean_abs_shap": 2.1402
+      },
+      {
+        "feature": "in_pkts",
+        "label": "inbound packets",
+        "mean_abs_shap": 1.3116
+      },
+      {
+        "feature": "out_udp_frac",
+        "label": "UDP share of outbound flows",
+        "mean_abs_shap": 1.2763
+      }
+    ]
+  },
+  "persistence": {
+    "forecast_300s": {
+      "precision": 0.9745,
+      "recall": 0.8093,
+      "f1": 0.8843,
+      "fpr": 0.00035,
+      "pr_auc": 0.7918,
+      "threshold": 0.5,
+      "tp": 2216,
+      "fp": 58,
+      "fn": 522,
+      "tn": 163838,
+      "positives": 2738,
+      "n": 166634
+    },
+    "early_warning": {
+      "onsets": 194,
+      "early_warning_recall": 0.0,
+      "quiet_false_alarm_rate": 0.0,
+      "median_lead_s": null,
+      "mean_lead_s": null
+    }
+  }
+}

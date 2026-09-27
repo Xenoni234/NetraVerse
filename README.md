@@ -1,154 +1,67 @@
-# NetraVerse — SIH26153 Network Attack Forecasting
+# NetraVerse: World-Model Network Attack Forecasting
 
-NetraVerse is a research and demonstration system for forecasting network attack
-progression from rolling CICFlowMeter telemetry. It builds per-host 30-second
-windows, uses a sequential world model to forecast future risk, and maps the
-forecast to six stage-level MITRE ATT&CK categories:
+SIH 2026 · PS 26153 (NTRO).
 
-`Reconnaissance` · `Initial Access` · `Lateral Movement` · `Command & Control` · `Exfiltration` · `Impact`
+NetraVerse is a latent **world model** that learns how per-host network state evolves, `P(s_t+1 | s_t)`. It imagines the next **300 s** to forecast which hosts will be involved in attack activity, and maps the forecast to **MITRE ATT&CK** stages. Every forecast comes with an explanation. The analyst can **Accept / Modify / Reject** a recommended containment and see the re-simulated future.
 
-The SIH demo exposes +60s, +90s and +120s forecasts, replay controls, coloured
-temporal graphs, attention/explanation views, stage-linked advisory actions, and
-a live-monitoring path for an owned server.
-
-> This is a defensive research/demo system. Forecasts are warnings, not proof of
-> compromise, and recommendations require human approval.
-
-## Repository map
-
-```text
-api/server.py                 FastAPI forecast, upload, replay and live APIs
-frontend/                     Vite frontend and NetraVerse UI
-src/data/                     Loading, schema normalization and windowing
-src/models/                   World model, losses and attention localization
-src/inference/                Forecasting, rollout, live and uncertainty logic
-src/mitre/                    Stage mapping and advisory playbooks
-scripts/                      Data generation, training, evaluation and live tools
-demo/                         Streamlit demo helpers and small sample metadata
-docs/setup.md                 Full installation and operating guide
-docs/live_test_runbook.md     Authorized server-monitoring runbook
-agent/                        CICFlowMeter capture-agent scripts
-tests/                        Unit and pipeline tests
+```
+CSV ─┐                                  ┌─ Captum IG explanation (every forecast)
+PCAP ┼─ fusion.windowize ─ WorldModel ──┼─ rollout(state, 300 s) ─ MITRE stage ─ rule engine ─ counterfactual re-rollout
+Live ┘   (one 31-feature schema)        └─ GraphSAGE host context            (deterministic)   (same rollout, action applied)
 ```
 
 ## Quick start
 
-The complete setup is in [docs/setup.md](docs/setup.md). On Windows, the short
-version is:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
-cd frontend
-npm install
-cd ..
-```
-
-Start the backend from the repository root:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn api.server:app --host 127.0.0.1 --port 8000 --reload
-```
-
-In a second terminal start the frontend:
-
-```powershell
-cd frontend
-npm run dev -- --host 127.0.0.1
-```
-
-Open <http://localhost:5173/simulate>. The frontend uses the API at
-`http://localhost:8000`; set `NV_API_BASE` in the browser shell if the API is
-hosted elsewhere.
-
-## Demo data and checkpoints
-
-Raw CIC-IDS/CTU data, generated 200k+ row CSV suites, experiment checkpoints,
-parquet files, and live predictions are intentionally excluded from Git. They
-are large or environment-specific and are regenerated locally. See
-`.gitignore` and [docs/setup.md](docs/setup.md) for the data layout.
-
-The public showcase checkpoint is `models/wm_sih_demo/best.ckpt`. It is kept
-separate from the reference checkpoint and is intended for the SIH demo workflow.
-Its actual benchmark is documented in
-[docs/benchmarks/sih_demo_benchmark.md](docs/benchmarks/sih_demo_benchmark.md);
-the results combine labelled CIC-derived demo suites with controlled synthetic
-episodes and must not be presented as production validation.
-
-If the SIH checkpoint is absent locally, the API falls back to the tracked
-reference checkpoint at `models/wm_final/best.ckpt`. To select a checkpoint
-explicitly:
-
-```powershell
-$env:NETRAVERSE_CHECKPOINT = "$PWD\models\wm_sih_demo\best.ckpt"
-```
-
-Create local labelled demo uploads after placing the required CIC-IDS2017 files
-under `data/raw/CIC-IDS2017/TrafficLabelling/`:
-
-```powershell
-python scripts/build_demo_samples.py
-python scripts/build_large_labelled_demo_datasets.py
-python scripts/build_mixed_labelled_demo_datasets.py
-```
-
-The generated files remain local and can be uploaded through **Simulate**.
-
-## Live server monitoring
-
-The supported flow is:
-
-```text
-owned server interface → CICFlowMeter → rolling flow files → calibration
-→ SIH checkpoint → live predictions → FastAPI → Live page
-```
-
-Capture only on a server and interface that you own or are authorized to test.
-Install and run the capture agent using [agent/README.md](agent/README.md), then
-start the forecast loop:
-
 ```bash
-python scripts/live_forecast.py \
-  --flows ~/nv_flows \
-  --checkpoint models/wm_sih_demo/best.ckpt \
-  --interval 30
+git clone https://github.com/Xenoni234/NetraVerse.git && cd NetraVerse && git checkout rebuild
+python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # Linux: .venv/bin/python
+python -m pytest -q                                           # sanity check
+python -m uvicorn src.api.main:app --port 8000                # backend (loads models/world_model.pt)
+python -m streamlit run dashboard/app.py                      # dashboard -> http://localhost:8501
 ```
 
-Use [docs/live_test_runbook.md](docs/live_test_runbook.md) for calibration,
-feed-health checks, and the authorized server demo procedure.
+- Pick **CSV Upload**, upload a CIC/CTU/UNSW flow CSV or a PCAP (or a bundled sample), then **Analyse** and **▶ Play**.
+- Playback pauses at the first alert, where you choose Accept, Modify or Reject.
+- Optional local narration: install Ollama and run `ollama pull qwen2.5:3b`.
 
-## Testing
+## Documentation
 
-```powershell
-pytest
-```
+| Doc | For |
+|---|---|
+| [docs/SETUP.md](docs/SETUP.md) | Install, data layout, running on one or two machines, all environment variables |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Repo layout, the contracts you must not break, common tasks, tests, working rules |
+| [docs/TRAINING.md](docs/TRAINING.md) | Model details, reproducing training, results, **tuning decisions (R20)**, limitations, lab retraining |
+| [docs/API.md](docs/API.md) | Every backend endpoint |
+| [docs/LIVE_SENSOR.md](docs/LIVE_SENSOR.md) | Live capture, enforcement, our laptop deployment, current live status |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Known problems and fixes |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 2-page architecture document (PS deliverable) |
+| [demo/demo_script.md](demo/demo_script.md) | The 2-minute demo walkthrough |
+| [reports/benchmarks.md](reports/benchmarks.md) | All measured results (generated) |
+| [models/README.md](models/README.md) | What each checkpoint is |
+| `prd.md`, `architecture.md`, `rules.md`, `phases.md`, `design.md` | The project spec (authoritative) |
 
-Frontend checks:
+## Status
 
-```powershell
-cd frontend
-npm run build
-node --check public/api.js
-```
+| Phase | State |
+|---|---|
+| 0–1 Data, unified schema, CSV/PCAP/live fusion | Done |
+| 2 RSSM-lite world model + 300 s rollout, LogReg baseline | Done. Test F1 0.860 / PR-AUC 0.921 vs LogReg 0.543 / 0.766 |
+| 3 MITRE mapping, Captum + SHAP | Done |
+| 4 Rule engine, counterfactual Accept/Modify/Reject | Done |
+| 5 GraphSAGE host layer | Done. Ablation PR-AUC 0.921 vs 0.904 |
+| 6 Cross-dataset zero-shot | Done. **Fails** (CTU-13 0.006, UNSW 0.19), reported honestly |
+| 7 FastAPI backend | Done |
+| 8 Live capture + real nftables enforcement | Done, deployed on the sensor laptop |
+| 9 Streamlit dashboard with the preserved 3D topology | Done |
+| 10 Local-LLM narration | Done (Ollama, async, template fallback) |
+| 11 Live home-network demo | Tooling done. **Next: record lab traffic and retrain.** The current model misses real scans on the home network. See docs/TRAINING.md. |
+| 12 Docs | Done (this folder) |
+| 13 Docker | Not pursued by the team. Unmaintained Dockerfiles remain in the repo. |
+| 14 Demo video + slides | To do |
 
-## Design and limitations
+## Team workflow
 
-- Replay is causal: future windows and labelled attack intervals are not revealed
-  until playback reaches them.
-- The peak-risk summary is deferred until replay completion.
-- Attention is displayed as model focus, not causal proof.
-- Live traffic is prediction-only; measured lead time requires a trusted operator
-  event or a labelled replay.
-- A sudden attack with no observable precursor may only be detected at onset.
-- Stage labels are stage-level ATT&CK mappings, not individual technique claims.
-
-See [DESIGN.md](DESIGN.md), [docs/architecture.md](docs/architecture.md), and
-[docs/attack_taxonomy.md](docs/attack_taxonomy.md) for the locked schemas and
-mapping details.
-
-## License
-
-MIT. See [pyproject.toml](pyproject.toml).
+- Work on branch `rebuild`. Keep `python -m pytest -q` green.
+- Regenerate reports with the scripts; never hand-edit numbers (R1/R2).
+- Log every tuning decision in docs/TRAINING.md (R20).
+- Plain commit messages.

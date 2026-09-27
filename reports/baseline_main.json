@@ -1,0 +1,230 @@
+{
+  "tag": "main",
+  "datasets": [
+    "cic2017",
+    "cic2018",
+    "ctu13",
+    "unsw"
+  ],
+  "threshold": 0.7835121655464172,
+  "test_per_dataset": {
+    "cic2017": {
+      "logreg": {
+        "precision": 0.0973,
+        "recall": 0.2921,
+        "f1": 0.1459,
+        "fpr": 0.01231,
+        "pr_auc": 0.1569,
+        "threshold": 0.78351,
+        "tp": 85,
+        "fp": 789,
+        "fn": 206,
+        "tn": 63320,
+        "positives": 291,
+        "n": 64400
+      },
+      "persistence": {
+        "precision": 0.9896,
+        "recall": 0.9828,
+        "f1": 0.9862,
+        "fpr": 5e-05,
+        "pr_auc": 0.9727,
+        "threshold": 0.5,
+        "tp": 286,
+        "fp": 3,
+        "fn": 5,
+        "tn": 64106,
+        "positives": 291,
+        "n": 64400
+      }
+    },
+    "cic2018": {
+      "logreg": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "fpr": 0.00754,
+        "pr_auc": null,
+        "threshold": 0.78351,
+        "tp": 0,
+        "fp": 208,
+        "fn": 0,
+        "tn": 27392,
+        "positives": 0,
+        "n": 27600
+      },
+      "persistence": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "fpr": 0.0,
+        "pr_auc": null,
+        "threshold": 0.5,
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tn": 27600,
+        "positives": 0,
+        "n": 27600
+      }
+    },
+    "ctu13": {
+      "logreg": {
+        "precision": 0.0589,
+        "recall": 0.1948,
+        "f1": 0.0905,
+        "fpr": 0.0201,
+        "pr_auc": 0.0274,
+        "threshold": 0.78351,
+        "tp": 83,
+        "fp": 1326,
+        "fn": 343,
+        "tn": 64648,
+        "positives": 426,
+        "n": 66400
+      },
+      "persistence": {
+        "precision": 0.9308,
+        "recall": 0.6948,
+        "f1": 0.7957,
+        "fpr": 0.00033,
+        "pr_auc": 0.6487,
+        "threshold": 0.5,
+        "tp": 296,
+        "fp": 22,
+        "fn": 130,
+        "tn": 65952,
+        "positives": 426,
+        "n": 66400
+      }
+    },
+    "unsw": {
+      "logreg": {
+        "precision": 1.0,
+        "recall": 0.9994,
+        "f1": 0.9997,
+        "fpr": 0.0,
+        "pr_auc": 1.0,
+        "threshold": 0.78351,
+        "tp": 1539,
+        "fp": 0,
+        "fn": 1,
+        "tn": 6694,
+        "positives": 1540,
+        "n": 8234
+      },
+      "persistence": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "fpr": 0.0,
+        "pr_auc": 1.0,
+        "threshold": 0.5,
+        "tp": 1540,
+        "fp": 0,
+        "fn": 0,
+        "tn": 6694,
+        "positives": 1540,
+        "n": 8234
+      }
+    }
+  },
+  "logreg": {
+    "forecast_300s": {
+      "precision": 0.4236,
+      "recall": 0.7563,
+      "f1": 0.543,
+      "fpr": 0.01413,
+      "pr_auc": 0.7657,
+      "threshold": 0.78351,
+      "tp": 1707,
+      "fp": 2323,
+      "fn": 550,
+      "tn": 162054,
+      "positives": 2257,
+      "n": 166634
+    },
+    "early_warning": {
+      "onsets": 54,
+      "early_warning_recall": 0.0,
+      "quiet_false_alarm_rate": 0.01409,
+      "median_lead_s": null,
+      "mean_lead_s": null
+    },
+    "shap_top_features": [
+      {
+        "feature": "out_bytes",
+        "label": "outbound bytes",
+        "mean_abs_shap": 21.9398
+      },
+      {
+        "feature": "out_mean_pkt_size",
+        "label": "mean outbound packet size",
+        "mean_abs_shap": 14.5625
+      },
+      {
+        "feature": "out_pkts",
+        "label": "outbound packets",
+        "mean_abs_shap": 9.8626
+      },
+      {
+        "feature": "ttl_mean_mask",
+        "label": "TTL observed",
+        "mean_abs_shap": 3.6308
+      },
+      {
+        "feature": "out_tcp_frac",
+        "label": "TCP share of outbound flows",
+        "mean_abs_shap": 3.2825
+      },
+      {
+        "feature": "ttl_mean",
+        "label": "mean packet TTL",
+        "mean_abs_shap": 3.0051
+      },
+      {
+        "feature": "retrans_rate",
+        "label": "retransmission rate",
+        "mean_abs_shap": 2.921
+      },
+      {
+        "feature": "tcp_win_mean",
+        "label": "mean TCP window size",
+        "mean_abs_shap": 2.342
+      },
+      {
+        "feature": "retrans_rate_mask",
+        "label": "retransmissions observed",
+        "mean_abs_shap": 2.3177
+      },
+      {
+        "feature": "tcp_win_mean_mask",
+        "label": "TCP window observed",
+        "mean_abs_shap": 1.7797
+      }
+    ]
+  },
+  "persistence": {
+    "forecast_300s": {
+      "precision": 0.9884,
+      "recall": 0.9402,
+      "f1": 0.9637,
+      "fpr": 0.00015,
+      "pr_auc": 0.93,
+      "threshold": 0.5,
+      "tp": 2122,
+      "fp": 25,
+      "fn": 135,
+      "tn": 164352,
+      "positives": 2257,
+      "n": 166634
+    },
+    "early_warning": {
+      "onsets": 54,
+      "early_warning_recall": 0.0,
+      "quiet_false_alarm_rate": 0.0,
+      "median_lead_s": null,
+      "mean_lead_s": null
+    }
+  }
+}

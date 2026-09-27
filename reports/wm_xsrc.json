@@ -1,0 +1,258 @@
+{
+  "tag": "xsrc",
+  "datasets": [
+    "cic2017",
+    "cic2018"
+  ],
+  "gnn": true,
+  "pos_weight": 1.9651876771282013,
+  "threshold": 0.9836691951751709,
+  "threshold_rule": "max mean-F1 over datasets on validation",
+  "calibration": {
+    "a": 1.6249865041570266,
+    "b": -6.342179697989825
+  },
+  "threshold_calibrated": 0.5786902990206276,
+  "val": {
+    "threshold": 0.9836691951751709,
+    "forecast_300s": {
+      "precision": 0.8657,
+      "recall": 0.6704,
+      "f1": 0.7556,
+      "fpr": 0.00065,
+      "pr_auc": 0.7433,
+      "threshold": 0.98367,
+      "tp": 419,
+      "fp": 65,
+      "fn": 206,
+      "tn": 100510,
+      "positives": 625,
+      "n": 101200
+    },
+    "detection_now": {
+      "precision": 0.9376,
+      "recall": 0.8477,
+      "f1": 0.8904,
+      "fpr": 0.0003,
+      "pr_auc": 0.9159,
+      "threshold": 0.97784,
+      "tp": 451,
+      "fp": 30,
+      "fn": 81,
+      "tn": 100638,
+      "positives": 532,
+      "n": 101200
+    },
+    "early_warning": {
+      "onsets": 94,
+      "early_warning_recall": 0.0,
+      "quiet_false_alarm_rate": 0.00051,
+      "median_lead_s": null,
+      "mean_lead_s": null
+    }
+  },
+  "test": {
+    "threshold": 0.9836691951751709,
+    "forecast_300s": {
+      "precision": 0.9474,
+      "recall": 0.433,
+      "f1": 0.5943,
+      "fpr": 8e-05,
+      "pr_auc": 0.7033,
+      "threshold": 0.98367,
+      "tp": 126,
+      "fp": 7,
+      "fn": 165,
+      "tn": 91702,
+      "positives": 291,
+      "n": 92000
+    },
+    "detection_now": {
+      "precision": 0.7312,
+      "recall": 0.6401,
+      "f1": 0.6827,
+      "fpr": 0.00074,
+      "pr_auc": 0.721,
+      "threshold": 0.82499,
+      "tp": 185,
+      "fp": 68,
+      "fn": 104,
+      "tn": 91643,
+      "positives": 289,
+      "n": 92000
+    },
+    "early_warning": {
+      "onsets": 5,
+      "early_warning_recall": 0.0,
+      "quiet_false_alarm_rate": 8e-05,
+      "median_lead_s": null,
+      "mean_lead_s": null
+    }
+  },
+  "test_per_dataset": {
+    "cic2017": {
+      "forecast_300s": {
+        "precision": 0.9474,
+        "recall": 0.433,
+        "f1": 0.5943,
+        "fpr": 0.00011,
+        "pr_auc": 0.7036,
+        "threshold": 0.98367,
+        "tp": 126,
+        "fp": 7,
+        "fn": 165,
+        "tn": 64102,
+        "positives": 291,
+        "n": 64400
+      },
+      "early_warning": {
+        "onsets": 5,
+        "early_warning_recall": 0.0,
+        "quiet_false_alarm_rate": 0.00011,
+        "median_lead_s": null,
+        "mean_lead_s": null
+      }
+    },
+    "cic2018": {
+      "forecast_300s": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "fpr": 0.0,
+        "pr_auc": null,
+        "threshold": 0.98367,
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tn": 27600,
+        "positives": 0,
+        "n": 27600
+      },
+      "early_warning": {
+        "onsets": 0
+      }
+    }
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "total": 11.4793,
+      "recon": 1.6832,
+      "recon_f": 1.6235,
+      "kl": 1.0038,
+      "risk_now": 0.8585,
+      "risk_f": 0.9184,
+      "stage_f": 1.5127,
+      "val_pr_auc": 0.3967,
+      "val_macro_pr_auc": 0.2864,
+      "val_f1": 0.6349,
+      "val_onset_recall": 0.0,
+      "sec": 18
+    },
+    {
+      "epoch": 2,
+      "total": 7.7631,
+      "recon": 1.3107,
+      "recon_f": 1.3449,
+      "kl": 1.0351,
+      "risk_now": 0.3685,
+      "risk_f": 0.6808,
+      "stage_f": 0.7666,
+      "val_pr_auc": 0.246,
+      "val_macro_pr_auc": 0.6646,
+      "val_f1": 0.3752,
+      "val_onset_recall": 0.0638,
+      "sec": 17
+    },
+    {
+      "epoch": 3,
+      "total": 6.3201,
+      "recon": 1.1138,
+      "recon_f": 1.2151,
+      "kl": 1.0924,
+      "risk_now": 0.2376,
+      "risk_f": 0.538,
+      "stage_f": 0.5667,
+      "val_pr_auc": 0.189,
+      "val_macro_pr_auc": 0.5484,
+      "val_f1": 0.3355,
+      "val_onset_recall": 0.0851,
+      "sec": 17
+    },
+    {
+      "epoch": 4,
+      "total": 5.3497,
+      "recon": 0.9665,
+      "recon_f": 1.0262,
+      "kl": 1.1097,
+      "risk_now": 0.1827,
+      "risk_f": 0.4478,
+      "stage_f": 0.4553,
+      "val_pr_auc": 0.7433,
+      "val_macro_pr_auc": 0.6784,
+      "val_f1": 0.7641,
+      "val_onset_recall": 0.0,
+      "sec": 18
+    },
+    {
+      "epoch": 5,
+      "total": 4.5145,
+      "recon": 0.8067,
+      "recon_f": 0.877,
+      "kl": 1.1307,
+      "risk_now": 0.1524,
+      "risk_f": 0.3953,
+      "stage_f": 0.2744,
+      "val_pr_auc": 0.7948,
+      "val_macro_pr_auc": 0.6743,
+      "val_f1": 0.8247,
+      "val_onset_recall": 0.0,
+      "sec": 19
+    },
+    {
+      "epoch": 6,
+      "total": 4.1767,
+      "recon": 0.7157,
+      "recon_f": 0.8045,
+      "kl": 1.178,
+      "risk_now": 0.1416,
+      "risk_f": 0.371,
+      "stage_f": 0.2194,
+      "val_pr_auc": 0.7263,
+      "val_macro_pr_auc": 0.6374,
+      "val_f1": 0.8044,
+      "val_onset_recall": 0.0,
+      "sec": 18
+    },
+    {
+      "epoch": 7,
+      "total": 3.8319,
+      "recon": 0.6571,
+      "recon_f": 0.7419,
+      "kl": 1.1515,
+      "risk_now": 0.1263,
+      "risk_f": 0.3387,
+      "stage_f": 0.1828,
+      "val_pr_auc": 0.7893,
+      "val_macro_pr_auc": 0.6612,
+      "val_f1": 0.8409,
+      "val_onset_recall": 0.0,
+      "sec": 15
+    },
+    {
+      "epoch": 8,
+      "total": 3.6798,
+      "recon": 0.6346,
+      "recon_f": 0.7249,
+      "kl": 1.1374,
+      "risk_now": 0.1181,
+      "risk_f": 0.3219,
+      "stage_f": 0.1675,
+      "val_pr_auc": 0.7201,
+      "val_macro_pr_auc": 0.6562,
+      "val_f1": 0.7963,
+      "val_onset_recall": 0.0,
+      "sec": 15
+    }
+  ]
+}

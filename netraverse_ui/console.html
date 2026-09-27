@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NetraVerse · Console</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="vendor/plotly.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="eye"></span> NETRAVERSE <small>· attack forecasting console</small></div>
+    <div class="tabs">
+      <button class="tab active" data-mode="csv">CSV UPLOAD</button>
+      <button class="tab" data-mode="pcap">PCAP UPLOAD</button>
+      <button class="tab" data-mode="live">LIVE MONITOR</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="chip">world_model.pt</span>
+    <span class="chip">horizon 300 s</span>
+    <span class="chip">threshold 0.43</span>
+    <span class="chip ok" id="backendChip">backend online · cuda</span>
+    <a class="chip" href="index.html">← overview</a>
+  </div>
+
+  <div class="wrap">
+    <!-- ingest -->
+    <div class="panel" style="margin-bottom:14px">
+      <div class="ingest" id="ingest">
+        <label class="drop" id="drop">
+          <div class="l1" id="dropL1">Drop CSV flow capture here</div>
+          <div class="l2" id="dropL2">or click to browse · CIC / CTU flow schema</div>
+          <input type="file" id="fileInput" hidden />
+        </label>
+        <div class="fileinfo">
+          <div class="name" id="fName">No capture loaded</div>
+          <div class="meta" id="fMeta">Upload a capture to begin causal replay</div>
+          <div class="meta" id="fSubnets" style="color:var(--teal)"></div>
+          <div class="pipeline" id="pipeline"></div>
+          <div class="progress" style="margin-top:8px"><div id="ingestBar"></div></div>
+        </div>
+        <div class="controls">
+          <div class="seg" id="speedSeg">
+            <button data-s="1">1x</button><button data-s="2" class="on">2x</button><button data-s="4">4x</button>
+          </div>
+          <button class="btn primary" id="playBtn" disabled>▶ Replay</button>
+          <button class="btn" id="resetBtn" disabled>Reset</button>
+        </div>
+        <div class="clock">
+          <div class="big" id="clock">t+00:00</div>
+          <div class="sm" id="clockSub">window 0 / 0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- alert banner -->
+    <div class="alert" id="alert">
+      <div class="ico">⚠</div>
+      <div>
+        <div class="h" id="alertH">FORECAST</div>
+        <div class="b" id="alertB"></div>
+      </div>
+      <div class="cd"><div class="n" id="alertCd">--</div><div class="l">LEAD TIME</div></div>
+    </div>
+
+    <!-- KPIs -->
+    <div class="kpis">
+      <div class="panel kpi"><div class="k">Network risk</div><div class="v" id="kRisk">0.02</div><div class="d">P(attack ≤ 300 s)</div></div>
+      <div class="panel kpi"><div class="k">Latent stage</div><div class="v" id="kStage" style="font-size:16px">Benign</div><div class="d" id="kStageSub">nominal operations</div></div>
+      <div class="panel kpi"><div class="k">Active campaigns</div><div class="v" id="kCamp">0</div><div class="d">forecast + observed</div></div>
+      <div class="panel kpi"><div class="k">Hosts monitored</div><div class="v" id="kHosts">13</div><div class="d">2 subnets</div></div>
+      <div class="panel kpi"><div class="k">Mitigations</div><div class="v" id="kMit">0</div><div class="d">actions applied</div></div>
+    </div>
+
+    <!-- main: chart + latent state -->
+    <div class="row g-main">
+      <div class="panel">
+        <div class="panel-h">
+          <span class="t">Causal risk forecast</span>
+          <span class="s">P(attack within 300 s) per campaign · solid = observed, dashed = imagined</span>
+          <span class="legend-inline" id="chartLegend"></span>
+        </div>
+        <div class="panel-b"><div id="chart" style="height:420px"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><span class="t">Latent state</span><span class="s">world model</span></div>
+        <div class="panel-b">
+          <div class="stage-now" id="stageNow">Benign</div>
+          <div class="kv">
+            <div class="k">P(attack ≤ 300 s)</div><div class="v" id="lsRisk">0.02</div>
+            <div class="k">flows / s</div><div class="v" id="lsFlows">12</div>
+            <div class="k">active attacker</div><div class="v" id="lsAtk">—</div>
+            <div class="k">target</div><div class="v" id="lsTgt">—</div>
+          </div>
+          <div class="killchain" id="killchain"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- topology -->
+    <div class="row">
+      <div class="panel">
+        <div class="panel-h">
+          <span class="t">Host graph · live topology</span>
+          <span class="s">nodes = hosts · edges = flows · roles derived per window</span>
+          <span class="legend-inline">
+            <span><i style="background:#3ecf7a"></i>benign</span>
+            <span><i style="background:#f0a52c"></i>forecast target</span>
+            <span><i style="background:#ff4d4f"></i>attacker</span>
+            <span><i style="background:#35c2b5"></i>contained</span>
+          </span>
+        </div>
+        <div class="panel-b" style="padding:0">
+        <div class="nv-wrap" id="topoWrap">
+          <div id="nv-topo"></div>
+          <div id="nv-tip"></div>
+          <div class="nv-legend">
+            <span><i style="background:#8a93a1"></i>normal</span>
+            <span><i style="background:#f0a52c"></i>victim / target</span>
+            <span><i style="background:#ff4d4f"></i>attacker</span>
+            <span><i style="background:#35c2b5"></i>mitigated</span>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <!-- live ticker (live mode) -->
+    <div class="row" id="liveRow" style="display:none">
+      <div class="panel">
+        <div class="panel-h"><span class="t">Sensor stream · eth0</span><span class="s">run a launch_*.py trigger to inject a campaign</span></div>
+        <div class="panel-b"><div class="ticker" id="ticker"></div></div>
+      </div>
+    </div>
+
+    <!-- post-replay analysis -->
+    <div id="analysis">
+      <div class="section-title"><h2>POST-REPLAY ANALYSIS</h2><span>revealed after the capture is fully replayed</span></div>
+
+      <div class="row">
+        <div class="panel">
+          <div class="panel-h"><span class="t">Full campaign forecast</span><span class="s">every campaign · decision points marked</span></div>
+          <div class="panel-b"><div id="chartFull" style="height:340px"></div></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="panel">
+          <div class="panel-h"><span class="t">State mapping</span><span class="s">observed s_t vs imagined ŝ_t+k · 60 s windows</span></div>
+          <div class="panel-b"><div id="stateMap" style="height:220px"></div></div>
+        </div>
+      </div>
+
+      <div class="row g-2">
+        <div class="panel">
+          <div class="panel-h"><span class="t">Attack forecast log</span><span class="s">lead time = onset − first alert</span></div>
+          <div class="panel-b" style="padding:0"><table class="log" id="forecastLog"></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><span class="t">Decision audit log</span><span class="s">operator actions · risk before / after</span></div>
+          <div class="panel-b" style="padding:0"><table class="log" id="decisionLog"></table></div>
+        </div>
+      </div>
+
+      <div class="row" id="shapRow"></div>
+    </div>
+
+    <div class="empty" id="emptyMsg">Load a capture and press Replay to begin.</div>
+  </div>
+
+  <!-- decision modal -->
+  <div class="modal-bg" id="modalBg">
+    <div class="modal">
+      <div class="mh">
+        <div class="t1" id="mTactic">FORECAST · CREDENTIAL ACCESS</div>
+        <div class="t2" id="mTitle">SSH / FTP brute force</div>
+        <div class="t3" id="mSub"></div>
+      </div>
+      <div class="mb">
+        <div class="facts">
+          <div class="fact"><div class="k">MITRE</div><div class="v" id="mMitre">T1110</div></div>
+          <div class="fact"><div class="k">P(attack)</div><div class="v" id="mProb" style="color:var(--red)">0.87</div></div>
+          <div class="fact"><div class="k">LEAD TIME</div><div class="v" id="mLead">120 s</div></div>
+          <div class="fact"><div class="k">STAGE</div><div class="v" id="mStage" style="font-size:13px">Credential Access</div></div>
+        </div>
+        <div class="reco">
+          <div class="k">RECOMMENDED ACTION · deterministic decision engine</div>
+          <div class="v" id="mReco"></div>
+          <code id="mCmd"></code>
+        </div>
+        <div>
+          <div style="font-size:10px;letter-spacing:1.5px;color:var(--dim);margin-bottom:6px">TOP CONTRIBUTING FEATURES · SHAP</div>
+          <div class="shapbars" id="mShap"></div>
+        </div>
+        <div class="llm">
+          <span class="who">◆ ollama · llama3.1:8b — analyst narration</span>
+          <span id="mReason"></span><span class="caret" id="mCaret"></span>
+        </div>
+      </div>
+      <div class="mf">
+        <select id="mModify">
+          <option value="">Modify action…</option>
+        </select>
+        <div class="spacer" style="flex:1"></div>
+        <button class="btn danger" id="mReject">Reject</button>
+        <button class="btn" id="mModifyBtn">Apply modified</button>
+        <button class="btn primary" id="mAccept">Accept &amp; mitigate</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="scenarios.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# NetraVerse backend: FastAPI + world model (CPU) + rule engine + live sensor code
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8 tcpdump nftables curl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+# CPU wheels keep the image small and run on any judge machine; CUDA is optional at runtime
+RUN pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu \
+    && grep -v '^torch==' requirements.txt | grep -v '^streamlit' | grep -v '^pytest' > req.txt \
+    && pip install -r req.txt
+COPY src ./src
+COPY data/mitre_mapping.yaml ./data/mitre_mapping.yaml
+COPY models/world_model.pt models/training_config.yaml models/baseline_logreg.pkl ./models/
+COPY dashboard/components/topology3d/dist ./dashboard/components/topology3d/dist
+COPY demo ./demo
+EXPOSE 8000
+HEALTHCHECK --interval=10s --timeout=5s --start-period=40s --retries=10 \
+    CMD curl -fs http://localhost:8000/health || exit 1
+CMD ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

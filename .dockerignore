@@ -1,0 +1,11 @@
+.venv
+.git
+data/raw
+data/processed
+data/uploads
+models/*_nognn*
+models/*_xsrc*
+dashboard/components/topology3d/node_modules
+**/__pycache__
+.pytest_cache
+demo/samples
