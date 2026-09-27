@@ -314,6 +314,7 @@ def live_body() -> None:
             f" iface {status.get('iface') or status.get('replay') or '-'} · packets {status.get('packets', 0):,} · "
             f"flows buffered {status.get('flows_buffered', 0):,} · ticks {status.get('ticks', 0)} · "
             f"inference {status.get('last_tick_ms') or '-'} ms"
+            + (f" · <span class='nv-pill ok'>contained {', '.join(status['contained'])}</span>" if status.get("contained") else "")
             + (f" · <span class='nv-pill atk'>{status['error']}</span>" if status.get("error") else "") + "</div>")
     ov = stt.get("overview")
     if not status.get("running"):

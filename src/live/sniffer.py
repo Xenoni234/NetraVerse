@@ -95,6 +95,25 @@ class LiveMonitor:
             except Exception as e:  # keep the sensor alive
                 self.last_error = f"{type(e).__name__}: {e}"
 
+    def contained_sources(self, now: float | None = None) -> set[str]:
+        """Source IPs under an ACTIVELY APPLIED full block (block_source / isolate_host) whose nft
+        rule has not expired. Their packets are being dropped at the sensor's firewall, so they can
+        no longer reach or compromise the victim - the live risk must reflect that real containment
+        (never a simulated or refused action; tied strictly to enforcement.applied)."""
+        now = time.time() if now is None else now
+        out: set[str] = set()
+        for rec in self.actions:
+            enf = rec.get("enforcement") or {}
+            act = rec.get("action") or {}
+            if not enf.get("applied") or act.get("kind") not in ("block_source", "isolate_host"):
+                continue
+            exp = enf.get("expires_at")
+            if exp is not None and now >= exp:
+                continue                       # rule's TTL lapsed -> no longer contained
+            if act.get("target"):
+                out.add(act["target"])
+        return out
+
     def tick(self, now: float | None = None) -> None:
         t_start = time.time()
         now = time.time() if now is None else now
@@ -106,6 +125,12 @@ class LiveMonitor:
         w = self.E.window_s
         t0 = now - (self.E.L + 1) * w          # windows end exactly at "now" (sliding)
         flows = flows[flows["ts_end"] >= t0]
+        # Enforcement-aware risk: drop flows to/from actively-blocked sources. The firewall is
+        # dropping them, so they are no longer a live threat surface and must not keep the forecast
+        # high. This mirrors reality (contained), and is gated on a real applied nft rule.
+        contained = self.contained_sources(now)
+        if contained and len(flows):
+            flows = flows[~flows["src_ip"].isin(contained) & ~flows["dst_ip"].isin(contained)]
         if len(flows) == 0:
             return
         fm = windowize(flows, window_s=w, t0=t0, min_flows=3, max_hosts=150, source="live")
@@ -126,4 +151,5 @@ class LiveMonitor:
     def status(self) -> dict:
         return {"running": bool(self.started), "iface": self.iface, "replay": self.replay,
                 "ticks": self.ticks, "packets": self.gen.packets, "flows_buffered": len(self.ring.df),
-                "tick_s": self.tick_s, "last_tick_ms": self.last_tick_ms, "error": self.last_error}
+                "tick_s": self.tick_s, "last_tick_ms": self.last_tick_ms, "error": self.last_error,
+                "contained": sorted(self.contained_sources())}
