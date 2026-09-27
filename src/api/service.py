@@ -278,6 +278,18 @@ class Service:
                         break
             res["forecast_hit_step"] = hit
             res["forecast_lead_s"] = (a0 - hit) * self.E.window_s if hit is not None else None
+            # Early-warning lead measured to the COMPROMISE (stage >= 2), with reconnaissance (stage 1)
+            # as the precursor: the model's thesis is to alert DURING the scan, before the break-in, so
+            # the honest lead is alert-time vs first compromise window - not vs the recon that triggered
+            # it. (Onset detection = compromise with no earlier recon -> lead <= 0.)
+            truth = s["truth"]
+            fr = next((i for i, v in enumerate(truth) if int(v) == 1), None)      # first recon
+            fc = next((i for i, v in enumerate(truth) if int(v) >= 2), None)      # first compromise
+            res["first_recon_step"] = fr
+            res["first_compromise_step"] = fc
+            res["recon_before_compromise"] = bool(fr is not None and fc is not None and fr < fc)
+            if al is not None and fc is not None:
+                res["compromise_lead_s"] = (fc - al) * self.E.window_s           # +ve = alerted early
         return res
 
     # -- explanations (every forecast shown can be explained, R5) ----------------

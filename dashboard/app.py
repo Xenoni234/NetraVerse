@@ -257,11 +257,19 @@ def detection_banner(tl: dict, cur: int) -> None:
         return
     ws = tl["window_s"]
     parts = [f"Alert raised at <b>t+{al * ws // 60} min</b> (state s{al})."]
-    if tl.get("forecast_lead_s"):
+    cl = tl.get("compromise_lead_s")
+    if tl.get("recon_before_compromise") and cl is not None and cl > 0:
+        # the headline early-warning number: alerted during recon, this long before the compromise
+        parts.append(f"Forecast the compromise <b>{cl} s ({cl // 60} min) before</b> it began — "
+                     f"raised <b>during reconnaissance</b> (state s{tl.get('first_recon_step')}), "
+                     f"the break-in labelled at state s{tl.get('first_compromise_step')}.")
+    elif tl.get("forecast_lead_s"):
         parts.append(f"The rollout forecast the attack <b>{tl['forecast_lead_s']} s before</b> its first "
                      f"labelled window (from state s{tl['forecast_hit_step']}).")
     lt = tl.get("lead_time_s")
-    if lt is not None:
+    if cl is not None and cl > 0 and tl.get("recon_before_compromise"):
+        pass                                             # compromise-lead already stated above
+    elif lt is not None:
         parts.append(f"<b>{abs(lt)} s {'before' if lt > 0 else 'after'}</b> the first labelled attack flow"
                      + (" (detected at onset, not forecast in advance)." if lt <= 0 else "."))
     elif tl.get("truth_stage") is None:
