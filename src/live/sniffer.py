@@ -43,6 +43,7 @@ class LiveMonitor:
         self.actions: list[dict] = []
         self.latest = None
         self.last_tick_ms = None
+        self._neutralized: set[str] = set()      # hosts contained by a real applied block (this tick)
 
     # -- capture -------------------------------------------------------------
     def start(self) -> None:
@@ -125,16 +126,28 @@ class LiveMonitor:
         w = self.E.window_s
         t0 = now - (self.E.L + 1) * w          # windows end exactly at "now" (sliding)
         flows = flows[flows["ts_end"] >= t0]
-        # Enforcement-aware risk: drop flows to/from actively-blocked sources. The firewall is
-        # dropping them, so they are no longer a live threat surface and must not keep the forecast
-        # high. This mirrors reality (contained), and is gated on a real applied nft rule.
-        contained = self.contained_sources(now)
-        if contained and len(flows):
-            flows = flows[~flows["src_ip"].isin(contained) & ~flows["dst_ip"].isin(contained)]
         if len(flows) == 0:
             return
+        # Keep ALL flows in the analysis so the topology never loses the attacker (it stays on the
+        # graph, marked contained). The firewall drop is reflected at the RISK level instead.
         fm = windowize(flows, window_s=w, t0=t0, min_flows=3, max_hosts=150, source="live")
         a = self.svc.analyze(fm, filename=f"live:{self.iface or self.replay}", aid="live")
+        # Enforcement-aware risk (gated on a REAL applied block): a source under an active block, and
+        # any victim whose inbound traffic is now dominated by such blocked sources, is contained -
+        # the firewall is dropping it, so it is no longer a live threat. Zero its forecast so the line
+        # falls, and mark it mitigated on the graph. Never touches un-blocked hosts.
+        contained = self.contained_sources(now)
+        self._neutralized = set()
+        if contained:
+            inb = flows.groupby("dst_ip").size()
+            inb_c = flows[flows["src_ip"].isin(contained)].groupby("dst_ip").size()
+            frac = (inb_c / inb.reindex(inb_c.index)).fillna(0.0)
+            dominated = set(frac[frac > 0.5].index)          # victims now shielded by the block
+            self._neutralized = set(contained) | dominated
+            m = a.frame["host"].isin(self._neutralized).to_numpy()
+            if m.any():
+                a.fc["future"][m] = 0.0
+                a.fc["now"][m] = 0.0
         last = a.frame["window"].max()
         rows = np.flatnonzero(a.frame["window"].to_numpy() == last)
         for r in rows:

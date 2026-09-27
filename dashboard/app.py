@@ -382,6 +382,7 @@ def live_body() -> None:
             else:
                 st.warning(f"⚠️ Not enforced — {lbl}. {enf.get('message', '')} "
                            "The projected effect of the block is simulated below.")
+            outcome_comparison(S.live_result)
             counterfactual_panel(S.live_result)
             if series:
                 mb = S.live_result.get("measured_before")

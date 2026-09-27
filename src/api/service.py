@@ -309,7 +309,8 @@ class Service:
         return items
 
     # -- topology ------------------------------------------------------------------
-    def topology(self, a: Analysis, step: int, max_nodes: int = 60) -> dict:
+    def topology(self, a: Analysis, step: int, max_nodes: int = 60,
+                 mitigated_extra: set | None = None) -> dict:
         branch = self._active_branch(a, step)
         frame = branch["frame"] if branch else a.frame
         fc = branch["fc"] if branch else a.fc
@@ -325,6 +326,8 @@ class Service:
                 "block_source", "block_pair", "rate_limit") else {act.target}
             if act.kind == "block_source":
                 mitigated = set(roles.get("_victims_of", {}).get(act.target, [])) or mitigated
+        if mitigated_extra:                      # live: hosts contained by a real applied block
+            mitigated = set(mitigated) | set(mitigated_extra)
         snap = topology_snapshot(frame, edges, a.steps[0] + step, risk, stage_p, roles,
                                  self.E.threshold, mitigated, max_nodes)
         snap["step"] = step

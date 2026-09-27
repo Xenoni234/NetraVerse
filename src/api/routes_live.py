@@ -72,10 +72,12 @@ def state():
 
 @router.get("/topology")
 def topology(max_nodes: int = 60):
-    a = monitor().latest
+    m = monitor()
+    a = m.latest
     if a is None:
         return {"nodes": [], "edges": [], "window": 0}
-    return get_service().topology(a, len(a.steps) - 1, max_nodes)
+    return get_service().topology(a, len(a.steps) - 1, max_nodes,
+                                  mitigated_extra=getattr(m, "_neutralized", set()))
 
 
 @router.get("/explain")
