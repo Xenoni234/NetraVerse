@@ -29,6 +29,7 @@ from dashboard.components.killchain import kill_chain  # noqa: E402
 from dashboard.components.campaign_board import campaign_board  # noqa: E402
 from dashboard.components.event_feed import event_feed  # noqa: E402
 from dashboard.components.narration_panel import narration_panel  # noqa: E402
+from dashboard.components.whatif_panel import whatif_panel, audit_csv  # noqa: E402
 
 st.set_page_config(page_title="NetraVerse", page_icon=":material/lan:", layout="wide",
                    initial_sidebar_state="expanded")
@@ -89,6 +90,9 @@ with st.sidebar:
     if mode == "Live Monitor":
         st.text_input("Operator token", type="password", key="op_token",
                       help="Required by the sensor before a real nftables rule is applied.")
+        st.toggle("Auto-contain", key="auto_contain",
+                  help="Autonomous mode: automatically accept the recommended FULL block on a "
+                       "sustained alert (still honours the protected-IP guard). Off by default.")
 
 
 # ------------------------------------------------------------------ file modes
@@ -223,6 +227,7 @@ def replay_body() -> None:
         forecast_strip(src, tlf, cur)
         detection_banner(tlf, cur)
         if S.pending_ctx is not None and not S.decided:
+            whatif_panel(S.pending_ctx)
             choice, action = decision_panel(
                 S.pending_ctx, key=f"dec-{S.aid}",
                 fetch_narration=lambda: api.narration(S.aid, S.focus, S.cursor))
@@ -384,6 +389,16 @@ def live_body() -> None:
                            "rule on the sensor and are refused without it.")
             choice, action = decision_panel(ctx, key="live-dec",
                                             fetch_narration=lambda: api.live_narration(S.live_focus))
+            whatif_panel(ctx)
+            # Auto-contain (autonomous): accept the recommended FULL block once per host, if armed.
+            rec = ctx.get("recommended", {})
+            done = S.setdefault("auto_done", set())
+            if (S.get("auto_contain") and S.get("op_token") and not choice
+                    and rec.get("kind") in ("block_source", "isolate_host")
+                    and S.live_focus not in done):
+                done.add(S.live_focus)
+                choice, action = "accept", rec.get("id")
+                st.info(f"Auto-contain armed → accepting **{rec.get('label')}**")
             if choice:
                 try:
                     S.live_result = api.live_decide(S.live_focus, choice, action, S.get("op_token"))
@@ -426,7 +441,14 @@ def live_body() -> None:
     with b2:
         event_feed(hosts, stt.get("actions", []), ov["window_s"])
     narration_panel(lambda: api.live_narration(S.live_focus))
-    report_button(api.live_report_pdf, key="rep-live")
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        report_button(api.live_report_pdf, key="rep-live")
+    with rc2:
+        if stt.get("actions"):
+            rc2.download_button("Export decision audit trail (CSV)", audit_csv(stt["actions"]),
+                                file_name="netraverse_decisions.csv", mime="text/csv",
+                                key="audit-live", use_container_width=True)
 
 
 def live_mode() -> None:
