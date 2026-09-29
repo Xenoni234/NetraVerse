@@ -106,6 +106,11 @@ def live_figure(series: list[dict], threshold: float, horizon_s: int, height: in
     x = [(p["t"] - t0) / 60 for p in series]
     fig.add_trace(go.Scatter(x=x, y=[p["risk"] for p in series], mode="lines", name="forecast risk",
                              line=dict(color=ACCENT, width=2)))
+    before = [p.get("risk_before") for p in series]
+    if any(v is not None for v in before):
+        fig.add_trace(go.Scatter(x=x, y=[p.get("risk_before", p["risk"]) for p in series],
+                                 mode="lines", name="no action baseline",
+                                 line=dict(color=GRAY, width=1.5, dash="dot")))
     fut = series[-1]["future"]
     fx = [x[-1] + (k + 1) for k in range(len(fut))]
     fig.add_trace(go.Scatter(x=[x[-1]] + fx, y=[series[-1]["risk"]] + fut, mode="lines", name="300 s rollout",
@@ -114,3 +119,105 @@ def live_figure(series: list[dict], threshold: float, horizon_s: int, height: in
     fig = _layout(fig, height, max(fx[-1], 10))
     fig.update_xaxes(title="minutes since monitoring started")
     return fig
+
+
+def replay_campaign_figure(campaigns: list[dict], threshold: float, window_s: int,
+                           cursor: int, height: int = 330,
+                           branch: dict | None = None, focus_host: str | None = None,
+                           decision_step: int | None = None,
+                           decision: dict | None = None) -> go.Figure:
+    """Render only the causal replay window and each campaign's current rollout."""
+    fig = go.Figure()
+    palette = ["#3B9C9B", "#C0472C", "#C98A2C", "#B5673A", "#9E3B3B", "#7D8B3A",
+               "#7B61A8", "#D16B86", "#4B8A5E", "#4D83B8", "#A06A42", "#6F8B8B"]
+    ws = window_s / 60.0
+    max_horizon = 1
+    no_action_legend = False
+    action_legend = False
+    current = max(0, int(cursor))
+
+    for i, campaign in enumerate(campaigns):
+        risk = [float(value) for value in campaign.get("risk", [])]
+        if not risk:
+            continue
+        current_i = min(current, len(risk) - 1)
+        x = [step * ws for step in range(len(risk))]
+        host = campaign["host"]
+        color = palette[i % len(palette)]
+        lead = campaign.get("compromise_lead_s")
+        name = host + (f" · lead {lead}s" if lead is not None and lead > 0 else "")
+        observed_end = current_i + 1
+        has_branch = bool(branch and focus_host == host and decision_step is not None
+                          and current_i >= int(decision_step))
+
+        if has_branch:
+            ds = max(0, min(int(decision_step), current_i))
+            fig.add_trace(go.Scatter(
+                x=x[:ds + 1], y=risk[:ds + 1], mode="lines+markers", name=name,
+                line=dict(color=color, width=2), marker=dict(size=4),
+                hovertemplate=f"{host}<br>t+%{{x:.0f}} min · P(attack) %{{y:.0%}}<extra></extra>"))
+            fig.add_trace(go.Scatter(
+                x=x[ds:observed_end], y=risk[ds:observed_end], mode="lines+markers",
+                name="no action (recorded)", showlegend=not no_action_legend,
+                line=dict(color=GRAY, width=1.5, dash="dot"), marker=dict(size=3),
+                hovertemplate=f"{host} no action<br>t+%{{x:.0f}} min · P(attack) %{{y:.0%}}<extra></extra>"))
+            no_action_legend = True
+            branch_risk = [float(value) for value in branch.get("risk", [])]
+            action_y = branch_risk[ds:observed_end]
+            action = branch.get("action", {})
+            action_name = action.get("kind", "action").replace("_", " ")
+            if action_y:
+                fig.add_trace(go.Scatter(
+                    x=x[ds:observed_end], y=action_y, mode="lines+markers",
+                    name=f"after {action_name}", showlegend=not action_legend,
+                    line=dict(color=GREEN, width=2), marker=dict(size=4),
+                    hovertemplate=f"{host} after {action_name}<br>t+%{{x:.0f}} min · P(attack) %{{y:.0%}}<extra></extra>"))
+                action_legend = True
+            future_rows = branch.get("future", [])
+        else:
+            suffix = " · rejected -> no action" if (decision and decision.get("choice") == "reject"
+                                                       and focus_host == host) else ""
+            fig.add_trace(go.Scatter(
+                x=x[:observed_end], y=risk[:observed_end], mode="lines+markers", name=name + suffix,
+                line=dict(color=color, width=2), marker=dict(size=4),
+                hovertemplate=f"{host}<br>t+%{{x:.0f}} min · P(attack) %{{y:.0%}}<extra></extra>"))
+            future_rows = campaign.get("future", [])
+
+        future = future_rows[current_i] if current_i < len(future_rows) else []
+        future = [float(value) for value in future]
+        if future:
+            max_horizon = max(max_horizon, len(future))
+            fx = [(current_i + index + 1) * ws for index in range(len(future))]
+            current_risk = (branch.get("risk", [risk[current_i]])[current_i]
+                            if has_branch else risk[current_i])
+            fig.add_trace(go.Scatter(
+                x=[current_i * ws] + fx, y=[current_risk] + future, mode="lines",
+                showlegend=False, opacity=0.8,
+                line=dict(color=GREEN if has_branch else color, width=1.5, dash="dash"),
+                hovertemplate=f"{host} rollout<br>t+%{{x:.0f}} min · P(attack) %{{y:.0%}}<extra></extra>"))
+
+    fig.add_hline(y=threshold, line=dict(color=MUTED, width=1, dash="dash"),
+                  annotation_text=f"alert threshold {threshold:.2f}", annotation_position="top left")
+    fig.add_vline(x=current * ws, line=dict(color=RED, width=1, dash="dot"))
+    return _layout(fig, height, max((current + max_horizon + 0.5) * ws, 1))
+
+
+def campaign_figure(campaigns: list[dict], threshold: float, window_s: int,
+                   cursor: int | None = None, height: int = 330) -> go.Figure:
+    """Overlay every currently forecastable campaign so no attack is hidden by focus selection."""
+    fig = go.Figure()
+    palette = ["#3B9C9B", "#C0472C", "#C98A2C", "#B5673A", "#9E3B3B", "#7D8B3A",
+               "#7B61A8", "#D16B86", "#4B8A5E", "#4D83B8", "#A06A42", "#6F8B8B"]
+    for i, campaign in enumerate(campaigns):
+        lead = campaign.get("compromise_lead_s")
+        name = campaign["host"] + (f" · lead {lead}s" if lead is not None and lead > 0 else "")
+        x = [j * window_s / 60 for j in range(len(campaign.get("risk", [])))]
+        fig.add_trace(go.Scatter(x=x, y=campaign.get("risk", []), mode="lines+markers",
+                                 name=name, line=dict(color=palette[i % len(palette)], width=2),
+                                 marker=dict(size=4),
+                                 hovertemplate=f"{campaign['host']}<br>t+%{{x:.0f}} min · P(attack) %{{y:.0%}}<extra></extra>"))
+    fig.add_hline(y=threshold, line=dict(color=MUTED, width=1, dash="dash"),
+                  annotation_text=f"alert threshold {threshold:.2f}", annotation_position="top left")
+    if cursor is not None:
+        fig.add_vline(x=cursor * window_s / 60, line=dict(color=RED, width=1, dash="dot"))
+    return _layout(fig, height, max((len(c.get("risk", [])) - 1) * window_s / 60 for c in campaigns) if campaigns else 10)

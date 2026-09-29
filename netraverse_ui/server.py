@@ -148,7 +148,8 @@ class Handler(SimpleHTTPRequestHandler):
             except json.JSONDecodeError:
                 return self._json({"error": "bad json"}, 400)
             with _lock:
-                ev = {"id": len(_events) + 1, "scenario": data.get("scenario", ""), "ts": time.time(),
+                ev = {"id": len(_events) + 1, "scenario": data.get("scenario", ""),
+                      "action": data.get("action", "start"), "ts": time.time(),
                       "src": data.get("src"), "dst": data.get("dst")}
                 _events.append(ev)
             return self._json(ev)

@@ -14,6 +14,12 @@ class HostSummary(BaseModel):
     stage_name: str
     flows: int
     truth_attack_steps: Optional[int] = None
+    first_compromise_step: Optional[int] = None
+    compromise_lead_s: Optional[int] = None
+    forecast_lead_s: Optional[int] = None
+    decision_step: Optional[int] = None
+    decision_stage: Optional[dict[str, Any]] = None
+    recommended_action: Optional[dict[str, Any]] = None
 
 
 class UploadResponse(BaseModel):
@@ -60,6 +66,11 @@ class Timeline(BaseModel):
     forecast_hit_step: Optional[int] = None
     forecast_lead_s: Optional[int] = Field(None, description="how long before the first labelled attack window "
                                                              "the rollout already forecast it above threshold")
+    actual_first_recon_step: Optional[int] = None
+    first_recon_step: Optional[int] = None
+    first_compromise_step: Optional[int] = None
+    recon_before_compromise: Optional[bool] = None
+    compromise_lead_s: Optional[int] = None
 
 
 class Driver(BaseModel):
@@ -76,6 +87,12 @@ class DecisionRequest(BaseModel):
     step: int
     choice: Literal["accept", "modify", "reject"]
     action: Optional[Any] = None         # action id (or full action dict) for "modify"
+
+
+class RehearsalStartRequest(BaseModel):
+    scenario: str
+    speed: float = Field(default=12.0, gt=0.1, le=120.0)
+    tick_s: float = Field(default=1.0, gt=0.1, le=30.0)
 
 
 class Topology(BaseModel):

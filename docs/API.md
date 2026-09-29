@@ -42,7 +42,7 @@ Example:
 
 ```bash
 curl -X POST "localhost:8000/upload/path?path=demo/samples/cic2017_webattack_thursday.csv"
-curl "localhost:8000/upload/<id>/timeline?host=172.16.0.1"
+curl "localhost:8000/upload/<id>/timeline?host=10.20.0.12"
 curl -X POST localhost:8000/upload/<id>/decision -H "content-type: application/json" \
-     -d '{"host":"172.16.0.1","step":16,"choice":"accept"}'
+     -d '{"host":"10.20.0.12","step":16,"choice":"accept"}'
 ```

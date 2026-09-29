@@ -33,3 +33,6 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/
+
+# Internal spec kept local, not published
+/prd.md

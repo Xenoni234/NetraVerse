@@ -62,12 +62,20 @@ def timeline(aid: str, host: str) -> dict:
     return _ok(_client.get(f"/upload/{aid}/timeline", params={"host": host}))
 
 
+def campaigns(aid: str, limit: int = 12) -> list[dict]:
+    return _ok(_client.get(f"/upload/{aid}/campaigns", params={"limit": limit})).get("campaigns", [])
+
+
 def branch(aid: str, host: str) -> dict | None:
     return _ok(_client.get(f"/upload/{aid}/branch", params={"host": host}))
 
 
 def explain(aid: str, host: str, step: int) -> list:
     return _ok(_client.get(f"/upload/{aid}/explain", params={"host": host, "step": step}))
+
+
+def shap(aid: str, host: str, step: int) -> dict:
+    return _ok(_client.get(f"/upload/{aid}/shap", params={"host": host, "step": step}))
 
 
 def topology(aid: str, step: int) -> dict:
@@ -92,6 +100,19 @@ def live_start() -> dict:
     return _ok(_client.post("/live/start"))
 
 
+def rehearsal_scenarios() -> list[dict]:
+    return _ok(_client.get("/live/rehearsal/scenarios")).get("scenarios", [])
+
+
+def rehearsal_start(scenario: str, speed: float = 12.0, tick_s: float = 1.0) -> dict:
+    return _ok(_client.post("/live/rehearsal/start",
+                            json={"scenario": scenario, "speed": speed, "tick_s": tick_s}))
+
+
+def rehearsal_stop() -> dict:
+    return _ok(_client.post("/live/rehearsal/stop"))
+
+
 def live_state() -> dict:
     return _ok(_client.get("/live/state"))
 
@@ -102,6 +123,10 @@ def live_topology() -> dict:
 
 def live_explain(host: str) -> list:
     return _ok(_client.get("/live/explain", params={"host": host}))
+
+
+def live_shap(host: str) -> dict:
+    return _ok(_client.get("/live/shap", params={"host": host}))
 
 
 def live_decision_context(host: str) -> dict:

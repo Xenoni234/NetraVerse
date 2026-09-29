@@ -36,8 +36,8 @@ def whatif_panel(ctx: dict, title: str = "What-if: containment options") -> None
     st.html(f"""<div class='nv-card'><div class='nv-h'>{title}</div>
       <table class='nv-board'><tr><th>action</th><th>effect</th><th>containment</th></tr>
       {''.join(rows)}</table>
-      <div style='font-size:11px;color:#6E7478;margin-top:4px'>&#9733; recommended. Only full-contain
-      actions drive the live risk to zero when applied; partial ones reduce but do not clear it.</div></div>""")
+      <div style='font-size:11px;color:#6E7478;margin-top:4px'>&#9733; recommended. Full blocks clear the
+      affected campaign; rate limits and throttles reduce its forecast while preserving visibility.</div></div>""")
 
 
 def audit_csv(decisions: list[dict]) -> bytes:
