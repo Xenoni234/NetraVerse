@@ -1,6 +1,7 @@
 /* NetraVerse console controller */
 (() => {
-  const { WIN, STAGES, buildScenario, campaignRisk, LIVE_TEMPLATES, HOSTS } = window.NV;
+  const { WIN, STAGES, buildScenario, campaignRisk, modifyQuality, LIVE_TEMPLATES, HOSTS } = window.NV;
+  const LIVE_PRE = 4;   // windows of gradual pre-alert rise before the live forecast fires
   const $ = (id) => document.getElementById(id);
   const COL = { red: "#ff4d4f", amber: "#f0a52c", teal: "#35c2b5", green: "#3ecf7a",
     blue: "#4c9bff", violet: "#a57bff", muted: "#8a93a1", dim: "#5d6573", line: "#262c36", bg: "#0c0e12" };
@@ -44,8 +45,9 @@
   function allCampaigns() { return mode === "live" ? liveCampaigns : (scn ? scn.campaigns : []); }
 
   function riskAt(c, i) {
-    const st = decisions[c.id]
-      ? { decision: decisions[c.id].decision, decidedAt: decisions[c.id].decidedAt, riskAtDecision: decisions[c.id].riskAtDecision }
+    const d = decisions[c.id];
+    const st = d
+      ? { decision: d.decision, quality: d.quality, decidedAt: d.decidedAt, riskAtDecision: d.riskAtDecision, stoppedAt: d.stoppedAt }
       : { decision: null };
     return campaignRisk(c, i, st);
   }
@@ -72,33 +74,116 @@
     return { hosts, flows };
   }
 
-  // parse CSV text -> {hosts, flows}
-  function parseCsvHosts(text) {
+  // small stats helpers
+  const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const pct = (v) => `${Math.round(v * 100)}%`;
+  function groupBy(rows, key) { const m = new Map(); for (const r of rows) { const k = key(r); (m.get(k) || m.set(k, []).get(k)).push(r); } return m; }
+  function topKey(rows, key) { const c = new Map(); for (const r of rows) { const k = key(r); c.set(k, (c.get(k) || 0) + 1); } let best = null, n = -1; for (const [k, v] of c) if (v > n) { n = v; best = k; } return best; }
+
+  // parse CSV text -> {hosts, flows, campaigns, nWindows}
+  function parseCsv(text) {
     const lines = text.split(/\r?\n/);
-    if (!lines.length) return defaultHostsFlows();
-    const header = lines[0].split(",").map((s) => s.trim().toLowerCase());
-    let si = header.indexOf("src_ip"), di = header.indexOf("dst_ip");
+    if (lines.length < 2) return { ...defaultHostsFlows(), campaigns: null, nWindows: null };
+    const h = lines[0].split(",").map((s) => s.trim().toLowerCase());
+    const col = (name, alt) => { let i = h.indexOf(name); if (i < 0 && alt) i = h.indexOf(alt); return i; };
+    let si = col("src_ip", "source"), di = col("dst_ip", "destination");
+    const ti = col("ts_start", "timestamp"), pi = col("dport", "dst_port");
+    const syi = col("syn"), ri = col("rst"), fbi = col("fwd_bytes"), li = col("label");
     if (si < 0 || di < 0) {
-      // fall back: find first two IP-looking columns in the first data row
       const row = (lines[1] || "").split(",");
       const idxs = row.map((v, k) => (isIP(v.trim()) ? k : -1)).filter((k) => k >= 0);
       si = idxs[0] ?? 2; di = idxs[1] ?? 3;
     }
-    const hostC = new Map(), pairC = new Map();
-    for (let li = 1; li < lines.length; li++) {
-      const p = lines[li].split(",");
-      const s = (p[si] || "").trim(), d = (p[di] || "").trim();
+    const rows = [];
+    for (let k = 1; k < lines.length; k++) {
+      const p = lines[k].split(","); const s = (p[si] || "").trim(), d = (p[di] || "").trim();
       if (!isIP(s) || !isIP(d)) continue;
-      hostC.set(s, (hostC.get(s) || 0) + 1);
-      hostC.set(d, (hostC.get(d) || 0) + 1);
-      const k = s + "|" + d; pairC.set(k, (pairC.get(k) || 0) + 1);
+      rows.push({ s, d, dport: pi >= 0 ? (p[pi] || "").trim() : "", ts: ti >= 0 ? parseFloat(p[ti]) : k,
+        syn: syi >= 0 ? +p[syi] || 0 : 0, rst: ri >= 0 ? +p[ri] || 0 : 0, fwdb: fbi >= 0 ? +p[fbi] || 0 : 0,
+        label: li >= 0 ? (p[li] || "").trim() : "" });
     }
-    if (!hostC.size) return defaultHostsFlows();
-    const hosts = [...hostC.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24)
+    if (!rows.length) return { ...defaultHostsFlows(), campaigns: null, nWindows: null };
+
+    const hostC = new Map(), pairC = new Map();
+    for (const r of rows) {
+      hostC.set(r.s, (hostC.get(r.s) || 0) + 1); hostC.set(r.d, (hostC.get(r.d) || 0) + 1);
+      const key = r.s + "|" + r.d; pairC.set(key, (pairC.get(key) || 0) + 1);
+    }
+    const hosts = [...hostC.entries()].sort((a, b) => b[1] - a[1]).slice(0, 26)
       .map(([ip, flows]) => ({ ip, subnet: subnetOf(ip), flows }));
-    const flows = [...pairC.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60)
-      .map(([k, count]) => { const [src, dst] = k.split("|"); return { src, dst, count }; });
-    return { hosts, flows };
+    const flows = [...pairC.entries()].sort((a, b) => b[1] - a[1]).slice(0, 70)
+      .map(([key, count]) => { const [src, dst] = key.split("|"); return { src, dst, count }; });
+
+    const t0 = Math.min(...rows.map((r) => r.ts).filter((x) => isFinite(x)));
+    const maxW = Math.max(...rows.map((r) => Math.floor((r.ts - t0) / WIN)).filter((x) => isFinite(x)));
+    const nWindows = Math.max(12, Math.min(40, (isFinite(maxW) ? maxW : 20) + 2));
+    const campaigns = detectCampaigns(rows, t0);
+    return { hosts, flows, campaigns: campaigns.length ? campaigns : null, nWindows };
+  }
+
+  // detect attack campaigns from the file's own feature calculation (fan-out, port hammering, timing)
+  function detectCampaigns(rows, t0) {
+    const camps = []; let idx = 0;
+    const win = (r) => Math.floor((r.ts - t0) / WIN);
+    const bySrc = groupBy(rows, (r) => r.s);
+    for (const [s, ar] of bySrc) {
+      const dsts = new Set(ar.map((r) => r.d)), ports = new Set(ar.map((r) => r.dport));
+      // --- PortScan / service discovery: wide fan-out across hosts + ports ---
+      if (dsts.size >= 15 && ports.size >= 15) {
+        const wd = new Map();
+        for (const r of ar) { const w = win(r); (wd.get(w) || wd.set(w, new Set()).get(w)).add(r.d); }
+        const onsetW = [...wd.keys()].sort((a, b) => a - b).find((w) => wd.get(w).size >= 8);
+        const synR = mean(ar.map((r) => r.syn));
+        const lbl = topKey(ar.filter((r) => r.label && !/benign/i.test(r.label)), (r) => r.label) || "";
+        camps.push(mkCsvCamp(idx++, "T1046", "Reconnaissance", 1, /scan|port/i.test(lbl) ? "Network service scan" : "Network service scan",
+          s, subnetOf(topKey(ar, (r) => r.d)), onsetW != null ? onsetW : win(ar[0]),
+          [[`distinct destinations contacted (${dsts.size})`, clamp(dsts.size / 600, 0.08, 0.42), 1],
+          [`distinct destination ports (${ports.size})`, clamp(ports.size / 2000, 0.06, 0.3), 1],
+          [`SYN-only flow ratio (${pct(synR)})`, clamp(synR * 0.25, 0.03, 0.22), 1],
+          ["mean flow duration", -0.12, -1]],
+          { reco: `Block source ${s} at the core gateway ACL`, action: "Block source at gateway", cmd: `iptables -A FORWARD -s ${s} -j DROP` },
+          `Source ${s} contacted ${dsts.size} distinct hosts across ${ports.size} ports in short SYN-driven flows.`));
+      }
+      // --- Brute force: heavy flows to one host on a specific auth port ---
+      // (evaluated per auth port so port-scan noise to the same host doesn't mask it)
+      const byDst = groupBy(ar, (r) => r.d);
+      for (const [d, vr] of byDst) {
+        for (const authPort of ["22", "21", "3389", "23"]) {
+          const pr = vr.filter((r) => r.dport === authPort);
+          // require sustained volume AND that the auth port dominates this host's traffic
+          // (so port-scan spillover onto 22/3389 is not mistaken for a brute force)
+          if (pr.length < 40 || pr.length < 0.35 * vr.length) continue;
+          const wf = new Map(); for (const r of pr) { const w = win(r); wf.set(w, (wf.get(w) || 0) + 1); }
+          const onsetW = [...wf.keys()].sort((a, b) => a - b).find((w) => wf.get(w) >= 15);
+          const rstR = mean(pr.map((r) => r.rst)), avgb = Math.round(mean(pr.map((r) => r.fwdb)));
+          const svc = authPort === "3389" ? "RDP" : authPort === "21" ? "FTP" : authPort === "23" ? "Telnet" : "SSH";
+          camps.push(mkCsvCamp(idx++, "T1110", "Credential Access", 2, `${svc} brute force`,
+            s, d, onsetW != null ? onsetW : win(pr[0]),
+            [[`repeated dst port ${authPort} (${pr.length} flows)`, clamp(pr.length / 3000, 0.12, 0.4), 1],
+            ["single-target concentration", 0.24, 1],
+            [`small uniform payload (${avgb} B)`, clamp(1 - avgb / 2000, 0.05, 0.2), 1],
+            [`connection reset ratio (${pct(rstR)})`, clamp(rstR * 0.3, 0.03, 0.2), 1]],
+            { reco: `Rate-limit ${s} and enforce credential lockout on ${d}`, action: `Rate-limit + credential lockout on ${d}`, cmd: `fail2ban-client set sshd banip ${s}; ufw limit ${authPort}/tcp` },
+            `Source ${s} drove ${pr.length} ${svc} attempts at ${d} on port ${authPort} with small uniform payloads.`));
+          break; // one brute-force campaign per target host
+        }
+      }
+    }
+    camps.sort((a, b) => a.alertAt - b.alertAt);
+    return camps.slice(0, 4);
+  }
+
+  function mkCsvCamp(i, mitre, tactic, stage, name, src, dst, onsetW, shap, act, reasoning) {
+    const onset = Math.max(2, onsetW);
+    const alertAt = Math.max(1, onset - 2);
+    return {
+      id: "csv_" + i, name, mitre, tactic, stage, src, dst,
+      srcLabel: src, dstLabel: dst.includes("/") ? "server subnet" : dst,
+      alertAt, onset: Math.max(alertAt + 1, onset), peak: 0.92,
+      leadSec: (Math.max(alertAt + 1, onset) - alertAt) * WIN,
+      reco: act.reco, action: act.action, cmd: act.cmd, shap, reasoning,
+    };
   }
 
   function hostIps() { return new Set((scn.realHosts || []).map((h) => h.ip)); }
@@ -234,8 +319,10 @@
       r.onload = () => {
         const text = r.result;
         const rows = (text.match(/\n/g) || []).length;
-        const parsed = parseCsvHosts(text);
+        const parsed = parseCsv(text);
         scn.realHosts = parsed.hosts; scn.realFlows = parsed.flows;
+        if (parsed.campaigns) scn.campaigns = parsed.campaigns;   // detected from THIS file
+        if (parsed.nWindows) scn.nWindows = parsed.nWindows;
         setFileMeta(file, Math.max(0, rows - 1));
         renderTopo();
       };
@@ -420,18 +507,23 @@
 
   function applyDecision(kind, action) {
     const c = pendingCamp; if (!c) return;
+    const quality = kind === "modify" ? modifyQuality(c.stage, action) : null;
     decisions[c.id] = {
-      decision: kind, decidedAt: cursor, action,
+      decision: kind, quality, decidedAt: cursor, action, stoppedAt: null,
       riskAtDecision: riskAt(c, cursor), atClock: fmtClock(cursor),
       lead: (c.onset - forecasts[c.id].alertAt) * WIN, probAtOnset: riskAt(c, c.onset),
     };
-    if (kind !== "reject") { mitCount++; showContained(c); } else { $("alert").classList.remove("ok"); }
+    // "escalating" outcome: reject, or a modify that doesn't actually address the stage
+    const escalating = kind === "reject" || (kind === "modify" && quality === "wrong");
+    if (!escalating) { mitCount++; showContained(c); } else { $("alert").classList.remove("ok"); }
     $("modalBg").classList.remove("show");
     narrateToken++; clearInterval(typeTimer); $("mCaret").style.display = "none";
     paused = false; pendingCamp = null;
     step();
     if (mode === "live") {
-      tickLog(`decision ${kind.toUpperCase()} · ${action}`, kind === "reject" ? "a" : "g");
+      const q = quality ? ` (${quality})` : "";
+      if (escalating) tickLog(`decision ${kind.toUpperCase()}${q} · ${action} — attack still active, Ctrl+C to stop`, "a");
+      else tickLog(`decision ${kind.toUpperCase()}${q} · ${action} — attack stopped, risk decaying`, "g");
     } else {
       cursor++;
       playing = true; $("playBtn").textContent = "❚❚ Pause";
@@ -651,7 +743,7 @@
         }
       }
     }
-    timer = setTimeout(() => liveLoop(run), 900);
+    timer = setTimeout(() => liveLoop(run), 1100);   // slightly slower so the gradual rise is watchable
   }
 
   async function pollTriggers(run) {
@@ -659,7 +751,11 @@
     try {
       const r = await fetch(`/api/live/events?since=${liveSince}`);
       const j = await r.json();
-      for (const ev of j.events) { liveSince = Math.max(liveSince, ev.id); injectLive(ev.scenario); }
+      for (const ev of j.events) {
+        liveSince = Math.max(liveSince, ev.id);
+        if (ev.action === "stop") stopLiveAttack(ev.scenario);
+        else injectLive(ev.scenario);
+      }
     } catch (e) { /* server not reachable */ }
   }
 
@@ -667,12 +763,32 @@
     const tpl = LIVE_TEMPLATES[name]; if (!tpl) return;
     const c = Object.assign({}, tpl);
     c.id = tpl.id + "_" + Date.now();
-    c.alertAt = cursor + 1;
-    c.onset = c.alertAt + tpl.lead;
+    c.scenario = name;
+    c.rampStart = cursor;                 // sensor starts seeing it now: gradual rise begins
+    c.alertAt = cursor + LIVE_PRE;        // forecast fires only after the gradual rise
+    c.onset = c.alertAt + tpl.lead;       // the attack itself lands `lead` after the alert
     c.leadSec = tpl.lead * WIN; c.done = false;
     liveCampaigns.push(c);
     const { src, targets } = resolveCampaign(c);
-    tickLog(`campaign injected · ${c.mitre} ${c.name} ${src}→${targets[0] || c.dst}`, "w");
+    tickLog(`anomaly building · ${c.mitre} ${src}→${targets[0] || c.dst} · risk rising`, "w");
+  }
+
+  // Ctrl+C / stop command: the attacker stops -> any still-active (rejected or
+  // wrongly-modified) campaign begins to decay from where it was.
+  function stopLiveAttack(scenario) {
+    let n = 0;
+    for (const c of liveCampaigns) {
+      if (c.done) continue;
+      const d = decisions[c.id];
+      const active = d && (d.decision === "reject" || (d.decision === "modify" && d.quality === "wrong")) && d.stoppedAt == null;
+      if (active && (scenario === "all" || c.scenario === scenario)) {
+        d.stoppedAt = cursor;
+        const { src } = resolveCampaign(c);
+        tickLog(`attacker ${src} stopped (Ctrl+C) · risk decaying`, "g");
+        n++;
+      }
+    }
+    if (!n) tickLog(`stop signal — no active attack to stop`, "g");
   }
 
   const BENIGN_LINES = [

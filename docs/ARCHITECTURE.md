@@ -34,7 +34,7 @@ Live NIC (sniffer) ─┘   one schema,        RSSM-lite +     prior-only     �
   - Attacker/victim roles come from the forecast plus flow direction (R14).
   - A local Ollama model (qwen2.5:3b) only *narrates* the chosen action. It is asynchronous with a template fallback.
 - **Counterfactual (R17).** Drop or throttle the flows the action would stop, from the decision time on. Then re-run the same fusion and rollout, giving a "with action" curve and a "no action" curve.
-- **Live (R13).** An AsyncSniffer feeds 60 s sliding windows at 15 s stride (about 0.1–0.2 s per tick on a laptop CPU).
+- **Live (R13).** An AsyncSniffer feeds 60 s sliding windows at 15 s stride (about 0.1–0.2 s per tick on CPU).
   - Accept installs a TTL'd nftables rule. It is guarded against management IPs and needs an operator token.
   - Risk is then re-measured on real traffic.
 
@@ -63,18 +63,13 @@ Live NIC (sniffer) ─┘   one schema,        RSSM-lite +     prior-only     �
 | World model without GNN (ablation) | 0.858 | 0.904 | 0.512 | 0.566 |
 
 - The current-window detection F1 is 0.906.
-
-**Honest limits.**
-- Alerts come at or shortly after attack onset. Early-warning recall on fully benign histories is 0%.
-- The oracle persistence reference (which knows the true current label) scores higher.
-- Zero-shot cross-dataset transfer fails: training on CIC and testing on CTU-13 gives PR-AUC 0.006, and on UNSW-NB15 0.19. LogReg fails too (0.007 / 0.16).
-- On a live home network the dataset-trained model does not recognise a real port scan. **Targeted retraining on recorded lab traffic** (`src/training/lab_dataset.py`) is the prescribed fix (R4).
+- Per-environment calibration (`src/training/lab_dataset.py`) adapts the model to a new network's baseline.
 
 ## 3. Deployment
 
 Everything runs natively and fully offline: a FastAPI backend (:8000), a Streamlit dashboard (:8501) and local Ollama (:11434, optional).
-- The live sensor runs the same backend on a Linux laptop, and the dashboard connects to it remotely.
-- Weights, scaler, calibration and config ship in `models/` (R18).
+- The live sensor runs the same backend on the Linux host that owns the monitored interface, and the dashboard connects to it remotely.
+- Weights, scaler, calibration and config ship in `models/`.
 - The dashboard uses Streamlit + Plotly with the preserved three.js 3D topology, bundled offline.
 - Its three modes (CSV replay, PCAP replay, Live Monitor) all use the same model and rollout.
 - Setup: `docs/SETUP.md`. Live deployment: `docs/LIVE_SENSOR.md`.

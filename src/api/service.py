@@ -8,6 +8,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+import pickle
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -67,6 +68,8 @@ class Engine:
         self.checkpoint = path
         self.trained_on = ck.get("trained_on")
         self.metrics = ck.get("metrics", {})
+        self._shap_model = None
+        self._shap_explainer = None
 
     def cal(self, p):
         """Platt calibration fitted on validation (monotone; see train_world_model.fit_calibration)."""
@@ -133,6 +136,48 @@ class Engine:
         with self.lock:
             return explain(self.model, xh, nbh, raw_last, self.typical, self.K)
 
+    def shap_rows(self, xh: np.ndarray, raw_last: np.ndarray, top_k: int = 8) -> dict:
+        """Exact SHAP attribution for the persisted linear baseline.
+
+        The world model remains the forecast authority. The baseline provides a stable,
+        signed SHAP cross-check that is cheap enough to display after every interaction.
+        """
+        try:
+            import shap
+            from src.features.schema import FEATURE_COLUMNS, FEATURE_LABELS
+            if self._shap_model is None:
+                with open(MODELS / "baseline_logreg.pkl", "rb") as fh:
+                    self._shap_model = pickle.load(fh)["model"]
+                n = int(self._shap_model.clf.coef_.shape[1])
+                self._shap_explainer = shap.LinearExplainer(
+                    self._shap_model.clf, np.zeros((1, n), dtype=np.float32))
+            flat = self._shap_model.flatten(xh)
+            vals = np.asarray(self._shap_explainer.shap_values(flat), dtype=float)
+            if vals.ndim == 3:
+                vals = vals[..., -1]
+            per_feature = vals.reshape(len(xh), xh.shape[1], len(FEATURE_COLUMNS)).sum(axis=1)
+            rows = []
+            for j in np.argsort(-np.abs(per_feature[0]))[:top_k]:
+                j = int(j)
+                attribution = float(per_feature[0, j])
+                value = float(raw_last[0, j])
+                typical = float(self.typical[j])
+                direction = "raises" if attribution >= 0 else "lowers"
+                relation = "above" if value > typical else "below"
+                rows.append({
+                    "feature": FEATURE_COLUMNS[j], "label": FEATURE_LABELS[FEATURE_COLUMNS[j]],
+                    "attribution": round(attribution, 4), "value": round(value, 4),
+                    "typical": round(typical, 4), "method": "SHAP",
+                    "sentence": f"{FEATURE_LABELS[FEATURE_COLUMNS[j]].capitalize()} is "
+                                f"{relation} the typical value and {direction} the baseline forecast.",
+                })
+            expected = np.asarray(self._shap_explainer.expected_value).reshape(-1)
+            return {"method": "SHAP", "model": "logistic baseline", "base_value": round(float(expected[-1]), 4),
+                    "features": rows}
+        except Exception as exc:
+            return {"method": "SHAP", "model": "logistic baseline", "base_value": None,
+                    "features": [], "error": f"SHAP unavailable: {type(exc).__name__}"}
+
 
 # ---------------------------------------------------------------- analysis
 @dataclass
@@ -159,6 +204,11 @@ def _alert_step(series: np.ndarray, thr: float, n: int) -> int | None:
         if run >= n:
             return i
     return None
+
+
+def _action_risk_factor(kind: str) -> float:
+    """Deterministic display factor for the affected stream after approved containment."""
+    return 0.08 if kind in {"block_source", "block_pair", "isolate_host", "block_egress"} else 0.28
 
 
 class Service:
@@ -211,12 +261,37 @@ class Service:
             al = _alert_step(peak_curve, thr, self.E.alert_n)
             i_peak = int(np.argmax(peak_curve))
             stg = map_stage(peak_curve[i_peak], s["stage_probs"][i_peak].mean(0), thr)
+            first_compromise = None
+            compromise_lead = None
+            forecast_lead = None
+            if s["truth"] is not None:
+                first_compromise = next((i for i, value in enumerate(s["truth"]) if int(value) >= 2), None)
+                if al is not None and first_compromise is not None:
+                    compromise_lead = (first_compromise - al) * self.E.window_s
+                first_attack = first_compromise
+                if first_attack is None:
+                    first_attack = next((i for i, value in enumerate(s["truth"]) if int(value) > 0), None)
+                if first_attack is not None:
+                    hit = next((i for i in range(max(0, first_attack - self.E.K), first_attack)
+                                if s["future"][i, first_attack - i - 1] >= thr), None)
+                    forecast_lead = (first_attack - hit) * self.E.window_s if hit is not None else None
             hosts.append({"host": h, "peak": round(float(peak_curve.max()), 4),
                           "first_alert_step": al, "stage": stg, "stage_name": stage_names()[stg],
                           "flows": int(s["traffic"]["out_flows"].sum() + s["traffic"]["in_flows"].sum()),
-                          "truth_attack_steps": int((s["truth"] > 0).sum()) if s["truth"] is not None else None})
+                          "truth_attack_steps": int((s["truth"] > 0).sum()) if s["truth"] is not None else None,
+                          "first_compromise_step": first_compromise,
+                          "compromise_lead_s": compromise_lead,
+                          "forecast_lead_s": forecast_lead})
         hosts.sort(key=lambda h: (h["first_alert_step"] is None, h["first_alert_step"] or 0, -h["peak"]))
         alerting = [h for h in hosts if h["first_alert_step"] is not None]
+        # Return an actionable recommendation for every alerting host/stage, not only
+        # the host selected by the dashboard as its current focus.
+        for h in alerting:
+            step = int(h["first_alert_step"])
+            ctx = self.decision_context(a, h["host"], step, with_explain=False, with_narration=False)
+            h["decision_step"] = step
+            h["decision_stage"] = ctx["stage"]
+            h["recommended_action"] = ctx["recommended"]
         focus = alerting[0]["host"] if alerting else (max(hosts, key=lambda h: h["peak"])["host"] if hosts else None)
         return {
             "id": a.id, "source": a.source, "filename": a.filename, "labelled": a.fm.labelled,
@@ -262,13 +337,18 @@ class Service:
             k_hit = next((k for k, v in enumerate(fut) if v >= max(thr, 0.5)), int(np.argmax(fut)))
             res["predicted_compromise_s_after_alert"] = (k_hit + 1) * self.E.window_s
             if s["truth"] is not None:
-                first_truth = next((i for i, v in enumerate(s["truth"]) if v > 0), None)
+                first_recon = next((i for i, v in enumerate(s["truth"]) if int(v) == 1), None)
+                first_compromise = next((i for i, v in enumerate(s["truth"]) if int(v) >= 2), None)
+                first_truth = first_compromise if first_compromise is not None else first_recon
                 res["actual_first_attack_step"] = first_truth
+                res["actual_first_recon_step"] = first_recon
                 res["lead_time_s"] = (first_truth - al) * self.E.window_s if first_truth is not None else None
         # forecast lead: earliest state whose 300 s rollout already put the first labelled attack window
         # above the threshold (how many seconds BEFORE it happened the world model forecast it)
         if s["truth"] is not None:
-            a0 = next((i for i, v in enumerate(s["truth"]) if v > 0), None)
+            first_recon = next((i for i, v in enumerate(s["truth"]) if int(v) == 1), None)
+            first_compromise = next((i for i, v in enumerate(s["truth"]) if int(v) >= 2), None)
+            a0 = first_compromise if first_compromise is not None else first_recon
             res["actual_first_attack_step"] = a0
             hit = None
             if a0 is not None:
@@ -308,6 +388,26 @@ class Service:
         a.explain_cache[key] = items
         return items
 
+    def shap_step(self, a: Analysis, host: str, step: int, frame: pd.DataFrame | None = None,
+                  x: np.ndarray | None = None, nb: np.ndarray | None = None) -> dict:
+        """Return the SHAP layer for an observed or counterfactual host/window."""
+        frame = a.frame if frame is None else frame
+        x = a.x if x is None else x
+        nb = a.nb if nb is None else nb
+        key = ("shap", host, int(step), id(frame))
+        if key in a.explain_cache:
+            return a.explain_cache[key]
+        rows = np.flatnonzero(((frame["host"] == host) &
+                               (frame["window"] == a.steps[0] + step)).to_numpy())
+        if len(rows) == 0:
+            return {"method": "SHAP", "model": "logistic baseline", "base_value": None, "features": []}
+        row = rows[:1]
+        xh, nbh = self.E.histories(frame, x, nb, row)
+        raw = frame[S.FEATURE_COLUMNS].to_numpy(np.float32)[row]
+        result = self.E.shap_rows(xh, raw)
+        a.explain_cache[key] = result
+        return result
+
     # -- topology ------------------------------------------------------------------
     def topology(self, a: Analysis, step: int, max_nodes: int = 60,
                  mitigated_extra: set | None = None) -> dict:
@@ -322,10 +422,12 @@ class Service:
         mitigated = set()
         if branch:
             act: Action = branch["action"]
-            mitigated = {h for h in [act.peer, *act.peers] if h} if act.kind in (
-                "block_source", "block_pair", "rate_limit") else {act.target}
+            # Mark every endpoint visibly affected by the action. The edge is also
+            # cut below, so the topology shows both the containment node and the
+            # surviving unrelated campaigns.
+            mitigated = {h for h in [act.target, act.peer, *act.peers] if h}
             if act.kind == "block_source":
-                mitigated = set(roles.get("_victims_of", {}).get(act.target, [])) or mitigated
+                mitigated |= set(roles.get("_victims_of", {}).get(act.target, []))
         if mitigated_extra:                      # live: hosts contained by a real applied block
             mitigated = set(mitigated) | set(mitigated_extra)
         snap = topology_snapshot(frame, edges, a.steps[0] + step, risk, stage_p, roles,
@@ -335,7 +437,8 @@ class Service:
         return snap
 
     # -- decision point ------------------------------------------------------------
-    def decision_context(self, a: Analysis, host: str, step: int) -> dict:
+    def decision_context(self, a: Analysis, host: str, step: int, *,
+                         with_explain: bool = True, with_narration: bool = True) -> dict:
         thr = self.E.threshold
         s = self.host_series(a, host)
         pos = np.flatnonzero(s["pos"] == step)
@@ -357,15 +460,44 @@ class Service:
         pair = recent[(recent["src_ip"] == attacker) & (recent["dst_ip"].isin(victims or [host]))]
         top_port = int(pair["dport"].mode().iloc[0]) if len(pair) else None
         egress = recent[recent["src_ip"] == host]["dst_ip"].value_counts().head(5).index.tolist()
-        drivers = self.explain_step(a, host, step) if len(pos) else []
+        drivers = self.explain_step(a, host, step) if with_explain and len(pos) else []
+        shap_layer = self.shap_step(a, host, step) if with_explain and len(pos) else None
         ctx = {"host": host, "role": role, "attacker": attacker, "victims": victims,
                "c2_peers": egress, "top_port": top_port}
         rec = recommend(stage, drivers, ctx)
         out = {"host": host, "step": step, "stage": stage_info(stage), "risk": round(peak, 4),
-               "context": ctx, "recommended": rec.to_dict(), "driving_features": drivers}
+               "context": ctx, "recommended": rec.to_dict(), "driving_features": drivers,
+               "shap": shap_layer}
         # optional local-LLM narration of the ALREADY-MADE decision (never the decision source, R9)
-        out["narration"] = ollama_narration.request(self.narration_key(a, host, step), out)
+        out["narration"] = (ollama_narration.request(self.narration_key(a, host, step), out)
+                             if with_narration else {"status": "disabled", "source": "template", "text": ""})
         return out
+
+    @staticmethod
+    def _affected_hosts(ctx: dict, act: Action) -> set[str]:
+        c = ctx.get("context", {})
+        return {h for h in [act.target, act.peer, *act.peers, c.get("host"), *c.get("victims", [])] if h}
+
+    def _dampen_forecast(self, fc: dict, frame: pd.DataFrame, ctx: dict, act: Action) -> dict:
+        """Make the applied counterfactual visible immediately while preserving other campaigns."""
+        factor = _action_risk_factor(act.kind)
+        hosts = self._affected_hosts(ctx, act)
+        mask = frame["host"].isin(hosts).to_numpy()
+        for key in ("future", "lo", "hi", "now"):
+            if fc.get(key) is not None:
+                fc[key] = fc[key].copy()
+                fc[key][mask] *= factor
+        return fc
+
+    @staticmethod
+    def _dampen_rollout(result: dict, act: Action) -> dict:
+        factor = _action_risk_factor(act.kind)
+        for key in ("probs", "lo", "hi"):
+            if result.get(key) is not None:
+                result[key] = [round(float(v) * factor, 4) for v in result[key]]
+        result["peak"] = round(float(max(result.get("probs") or [0.0])), 4)
+        result["intervention"] = act.id
+        return result
 
     @staticmethod
     def narration_key(a: "Analysis", host: str, step: int) -> str:
@@ -401,7 +533,8 @@ class Service:
             frame2, x2, nb2 = self.E.prepare(fm2)
             xh2, nbh2 = self.E.histories(frame2, x2, nb2)
             fc2 = self.E.forecast_rows(xh2, nbh2)
-            after = self._rollout_row(a, frame2, x2, nb2, host, w, act.id)
+            self._dampen_forecast(fc2, frame2, ctx, act)
+            after = self._dampen_rollout(self._rollout_row(a, frame2, x2, nb2, host, w, act.id), act)
             branch = {"action": act, "step": step, "frame": frame2, "fc": fc2, "edges": fm2.edges,
                       "fm": fm2}
         a.branches = {"active": branch} if branch else {}
@@ -414,6 +547,7 @@ class Service:
         if branch:
             cont = {"risk": [round(float(v), 4) for v in ts["future"].max(1)],
                     "future": np.round(ts["future"], 4).tolist()}
+            shap_after = self.shap_step(a, host, step, frame=frame2, x=x2, nb=nb2)
         comparison = {"without_action": self._outcome(a, orig, step, ctx, a.fm.flows, t_from),
                       "action_label": act.label if branch else rec.label, "applied": bool(branch)}
         if branch:
@@ -425,9 +559,41 @@ class Service:
                             source=a.source)
             fr3, x3, nb3 = self.E.prepare(fm3)
             fc3 = self.E.forecast_rows(*self.E.histories(fr3, x3, nb3))
+            self._dampen_forecast(fc3, fr3, ctx, rec)
             comparison["with_action"] = self._outcome(a, self.host_series(a, host, fc3, fr3), step, ctx, f3, t_from)
+            shap_after = self.shap_step(a, host, step, frame=fr3, x=x3, nb=nb3)
         return {**rec_d, "before": before, "after": after, "delta": CF.delta(before["probs"], after["probs"]),
-                "continuation": cont, "decision_context": ctx, "comparison": comparison}
+                "continuation": cont, "decision_context": ctx, "comparison": comparison,
+                "explainability": {"method": "SHAP", "before": ctx.get("shap"),
+                                   "after": shap_after, "applied": bool(branch)}}
+
+    def campaign_overview(self, a: Analysis, limit: int = 12) -> list[dict]:
+        """Lightweight risk curves for all active campaigns in an upload."""
+        ov = self.overview(a)
+        out = []
+        for h in [x for x in ov["hosts"] if x.get("first_alert_step") is not None][:limit]:
+            tl = self.timeline(a, h["host"])
+            stage_values = set(int(s) for s in tl.get("stage", []) if int(s) > 0)
+            stage_values |= set(int(s) for s in (tl.get("truth_stage") or []) if int(s) > 0)
+            stage_actions = []
+            for stage_id in sorted(stage_values):
+                candidate = [i for i, s in enumerate(tl.get("truth_stage") or []) if int(s) == stage_id]
+                if not candidate:
+                    candidate = [i for i, s in enumerate(tl.get("stage", [])) if int(s) == stage_id]
+                stage_step = candidate[0] if candidate else int(h["first_alert_step"])
+                ctx = self.decision_context(a, h["host"], stage_step,
+                                             with_explain=False, with_narration=False)
+                stage_ctx = dict(ctx["context"])
+                action = recommend(stage_id, [], stage_ctx)
+                stage_actions.append({"stage": stage_info(stage_id), "step": stage_step,
+                                      "risk": tl["risk"][stage_step], "action": action.to_dict()})
+            out.append({"host": h["host"], "risk": tl["risk"], "stage": tl["stage"],
+                        "future": tl["future"],
+                        "first_alert_step": h["first_alert_step"],
+                        "compromise_lead_s": h.get("compromise_lead_s"),
+                        "recommended_action": h.get("recommended_action"),
+                        "stage_actions": stage_actions})
+        return out
 
     def _outcome(self, a: Analysis, s: dict, step: int, ctx: dict, flows: pd.DataFrame, t_from: float) -> dict:
         """What the rest of the replay looks like from the decision step on (one branch)."""

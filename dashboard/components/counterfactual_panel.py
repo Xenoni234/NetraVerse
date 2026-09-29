@@ -30,7 +30,7 @@ def counterfactual_panel(res: dict) -> None:
                       font=dict(color="#E6E6E6", size=11), legend=dict(orientation="h", y=1.15),
                       xaxis=dict(title="minutes ahead", gridcolor=GRID, dtick=1),
                       yaxis=dict(title="P(attack)", range=[0, 1.05], tickformat=".0%", gridcolor=GRID))
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _fmt_s(v) -> str:

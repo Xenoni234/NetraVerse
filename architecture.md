@@ -62,14 +62,13 @@ Three ingestion paths (CSV, PCAP, Live capture) converge on **one unified featur
 |---|---|---|
 | UI framework | **Streamlit** | Fast to build; file upload widget, live-refreshing charts, sufficient polish for demo video |
 | Charting | **Plotly** | Probability timeline, host-graph network visualization, counterfactual before/after comparison |
-| Styling | Custom CSS override on Streamlit (see `design.md`) | Enforce subtle/professional look, override Streamlit's default theme |
+| Styling | Custom CSS override on Streamlit | Enforce subtle/professional look, override Streamlit's default theme |
 
 ### 2.7 Packaging & Deployment
 | Component | Tool | Purpose |
 |---|---|---|
 | Environment | **Conda or `uv`** | Pin PyTorch/PyG/Scapy versions (PyG wheels are CUDA-sensitive; Scapy needs elevated privileges) |
-| Containerization | **Docker + docker-compose** | One-command judge deployment: backend + dashboard + Ollama (+ Redis if used), auto-opens dashboard |
-| Registry | **Docker Hub** | Public image hosting for judges — images published as `<dockerhub-user>/netraverse-backend` and `<dockerhub-user>/netraverse-dashboard` |
+| Runtime | **Native, fully offline** | Backend, dashboard and local Ollama run as native processes; no external service is called |
 
 ---
 
@@ -118,12 +117,6 @@ netraverse/
 ├── README.md
 ├── prd.md
 ├── architecture.md
-├── rules.md
-├── phases.md
-├── design.md
-├── docker-compose.yml
-├── Dockerfile.backend
-├── Dockerfile.dashboard
 ├── .env.example
 ├── pyproject.toml / environment.yml
 │
@@ -203,7 +196,7 @@ netraverse/
 │   │   ├── decision_panel.py        # Accept/Modify/Reject UI
 │   │   └── counterfactual_panel.py
 │   └── styles/
-│       └── theme.css                # subtle/professional override (see design.md)
+│       └── theme.css                # subtle/professional theme override
 │
 ├── models/                          # trained weights + configs (tracked via git-lfs or excluded, documented in README)
 │   ├── world_model.pt
@@ -213,7 +206,7 @@ netraverse/
 ├── notebooks/                       # exploratory analysis only, not part of the shipped pipeline
 │
 ├── demo/
-│   ├── attack_scripts/              # Nmap/Hydra/pivot scripts for controlled home-network demo
+│   ├── attack_scripts/              # controlled attack scripts for owned test devices
 │   ├── fallback_pcap/               # pre-recorded backup capture
 │   └── demo_script.md               # step-by-step recorded demo narrative
 │
@@ -243,11 +236,11 @@ All model-facing and dashboard-facing code should depend on these interfaces onl
 ## 6. Deployment Architecture
 
 ```
-docker-compose.yml
+native processes (fully offline)
  ├── backend    (FastAPI + PyTorch model + rule engine)     :8000
  ├── dashboard  (Streamlit)                                  :8501
- ├── ollama     (local LLM narration service)                :11434
+ ├── ollama     (local LLM narration service, optional)      :11434
  └── redis      (optional, sliding window state)             :6379
 ```
 
-`docker-compose up` → dashboard container waits for backend health check → opens/points to `localhost:8501`. Fully offline: no service in this stack calls out to any external API.
+Run the backend and dashboard as native processes (see `docs/SETUP.md`). Fully offline: no service in this stack calls out to any external API.

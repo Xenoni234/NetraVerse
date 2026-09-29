@@ -35,9 +35,15 @@ def test_upload_timeline_explain_decide(client):
     assert topo["nodes"]
     ctx = client.get(f"/upload/{ov['id']}/decision", params={"host": host, "step": step}).json()
     assert ctx["recommended"]["label"]
+    assert ctx["shap"]["method"] == "SHAP"
+    campaigns = client.get(f"/upload/{ov['id']}/campaigns", params={"limit": 24}).json()["campaigns"]
+    assert campaigns and any(c.get("stage_actions") for c in campaigns)
     res = client.post(f"/upload/{ov['id']}/decision",
                       json={"host": host, "step": step, "choice": "accept"}).json()
     assert len(res["after"]["probs"]) == 5 and "delta" in res
+    assert res["explainability"]["method"] == "SHAP"
+    assert res["explainability"]["after"]["features"]
+    assert res["delta"]["peak_after"] < res["delta"]["peak_before"]
     rej = client.post(f"/upload/{ov['id']}/decision",
                       json={"host": host, "step": step, "choice": "reject"}).json()
     assert rej["after"]["probs"] == rej["before"]["probs"]

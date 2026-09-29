@@ -1,6 +1,6 @@
 # Development guide
 
-Read the five spec documents in the repo root first: `prd.md`, `architecture.md`, `rules.md`, `phases.md` and `design.md`. They are authoritative, and the rules R1–R22 are enforced in review.
+Read the spec documents in the repo root first: `prd.md` (requirements) and `architecture.md` (structure + interfaces). They are authoritative.
 
 ## Repository layout
 
@@ -48,7 +48,7 @@ docs/         this documentation
 
 **Add a new action.** Add a kind to `ACTION_KINDS` and the stage rules in `rule_engine.py`. Then add its flow-level effect in `counterfactual.affected_mask`, and its nftables form in `action_executor.nft_commands`. Extend `tests/test_rule_engine.py`.
 
-**Change the UI.** Follow `design.md`: flat graphite, a teal accent, and muted red-orange/amber/gray/green for roles. No neon, purple, gradients or blur. The 3D topology is the one exception: it keeps its glow, pulse and particles by team decision.
+**Change the UI.** Keep the house style: flat graphite, a teal accent, and muted red-orange/amber/gray/green for roles. No neon, purple, gradients or blur. The 3D topology is the one exception: it keeps its glow, pulse and particles by team decision.
 
 **Rebuild the 3D bundle.** Only needed after editing `dashboard/components/topology3d/src/topology.js`:
 

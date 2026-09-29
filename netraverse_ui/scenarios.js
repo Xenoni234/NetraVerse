@@ -9,18 +9,41 @@ const WIN = 60; // seconds per state window
 const STAGES = ["Benign", "Reconnaissance", "Initial Access", "Lateral Movement",
   "Command & Control", "Exfiltration", "Impact"];
 
-// Risk = P(attack within 300 s). It must cross the alert threshold at alertAt
-// (that is the forecast firing `lead` seconds before onset), then rise to peak
-// as the predicted attack actually lands at onset.
-function ramp(i, alertAt, onset, peak) {
-  if (i < alertAt - 1) return 0.03 + 0.012 * Math.sin(i * 1.7);
-  if (i < alertAt) return 0.18;                       // rising, still below 0.43
-  if (i < onset) {                                    // forecast fired: above threshold, climbing to peak
+// Risk = P(attack within 300 s). It climbs gradually from `rampStart` (the moment
+// the sensor first sees the campaign) toward the threshold at `alertAt` (the
+// forecast firing `lead` seconds before onset), then rises to peak as the
+// predicted attack lands at onset. `rampStart` defaults to alertAt-1 (uploads);
+// live sets it earlier so the rise is visible before the modal.
+function ramp(i, alertAt, onset, peak, rampStart) {
+  const rs = (rampStart == null) ? alertAt - 1 : rampStart;
+  if (i < rs) return 0.03 + 0.012 * Math.sin(i * 1.7);
+  if (i < alertAt) {                                  // gradual pre-alert climb (below/at threshold)
+    const span = Math.max(1, alertAt - rs);
+    const t = (i - rs) / span;                        // 0..1 over the detection window
+    return 0.08 + 0.44 * t;                           // 0.08 -> ~0.5, crosses 0.43 near alertAt
+  }
+  if (i < onset) {                                    // forecast fired: climbing to peak over the lead time
     const span = Math.max(1, onset - alertAt);
     const t = (i - alertAt) / span;
-    return 0.55 + (peak - 0.55) * t;
+    return 0.5 + (peak - 0.5) * t;
   }
   return peak;
+}
+
+// which modify actions actually address each MITRE stage (used by all three flows)
+const STAGE_ACTIONS = {
+  1: { correct: ["Block source at gateway"], near: ["Rate-limit + credential lockout", "Isolate host (VLAN quarantine)"] },
+  2: { correct: ["Rate-limit + credential lockout", "Force MFA re-auth"], near: ["Isolate host (VLAN quarantine)", "Block source at gateway"] },
+  3: { correct: ["Isolate host (VLAN quarantine)"], near: ["Block source at gateway"] },
+  4: { correct: ["Null-route C2 endpoint", "Isolate host (VLAN quarantine)"], near: ["Block source at gateway"] },
+  5: { correct: ["Isolate host (VLAN quarantine)", "Null-route C2 endpoint"], near: ["Block source at gateway"] },
+  6: { correct: ["Rate-limit + credential lockout", "Block source at gateway"], near: ["Isolate host (VLAN quarantine)"] },
+};
+function modifyQuality(stage, action) {
+  const m = STAGE_ACTIONS[stage] || {};
+  if ((m.correct || []).includes(action)) return "correct";
+  if ((m.near || []).includes(action)) return "near";
+  return "wrong";   // e.g. "Snapshot + monitor only" or a mismatched action → attack keeps escalating
 }
 
 /* A campaign definition. onset = window where the attack lands.
@@ -37,19 +60,28 @@ function makeCampaign(c) {
   }, {});
 }
 
-// per-window risk for a campaign given the operator's decision
+// per-window risk for a campaign given the operator's decision.
+// state: {decision, quality, decidedAt, riskAtDecision, stoppedAt}
+// - reject OR modify-wrong  -> attacker keeps going: rise to peak and HOLD until
+//   the attack is stopped (Ctrl+C / stop command), then decay.
+// - accept OR modify-correct -> attack stops: steady gradual decay.
+// - modify-near             -> partial: slower decay.
 function campaignRisk(c, i, state) {
-  const base = ramp(i, c.alertAt, c.onset, c.peak);
+  const base = ramp(i, c.alertAt, c.onset, c.peak, c.rampStart);
   if (state.decision == null || i < state.decidedAt) return base;
   const k = i - state.decidedAt;
-  if (state.decision === "reject") {
-    // no action: rises to realised impact then plateaus high
-    return Math.min(0.98, c.peak + 0.10 + 0.02 * k);
+  const escalate = state.decision === "reject" || (state.decision === "modify" && state.quality === "wrong");
+  if (escalate) {
+    const hold = Math.min(0.97, Math.max(state.riskAtDecision, c.peak) + 0.03);
+    if (state.stoppedAt != null && i >= state.stoppedAt) {   // attacker stopped -> decay
+      const kk = i - state.stoppedAt;
+      return Math.max(0.03, hold * Math.pow(0.55, kk));
+    }
+    const up = Math.min(1, k / 3);                            // rise to peak, then hold
+    return state.riskAtDecision + (hold - state.riskAtDecision) * up;
   }
-  // accept / modify: steady exponential decay from the risk at decision time
-  const r0 = state.riskAtDecision;
-  const rate = state.decision === "modify" ? 0.62 : 0.5;
-  return Math.max(0.03, r0 * Math.pow(rate, k));
+  const rate = (state.decision === "modify" && state.quality === "near") ? 0.72 : 0.5;
+  return Math.max(0.03, state.riskAtDecision * Math.pow(rate, k));
 }
 
 /* Build the full scenario object the UI consumes. */
@@ -266,4 +298,4 @@ const LIVE_TEMPLATES = {
   },
 };
 
-window.NV = { THRESHOLD, WIN, STAGES, HOSTS, buildScenario, campaignRisk, ramp, LIVE_TEMPLATES, SCENARIO_SPECS };
+window.NV = { THRESHOLD, WIN, STAGES, HOSTS, buildScenario, campaignRisk, ramp, modifyQuality, LIVE_TEMPLATES, SCENARIO_SPECS };

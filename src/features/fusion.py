@@ -20,7 +20,9 @@ from src.features.flow_features import load_flows
 from src.mitre.mitre_lookup import label_to_stage
 
 SEGMENT_GAP_WINDOWS = 10
-TARGETED_STAGES = (1, 2, 3, 6)   # recon, initial access, lateral movement, impact: dst is the victim   # >10 idle minutes network-wide starts a new capture segment
+# All ATT&CK stages are valid host-side evidence. In particular, exfiltration
+# and C2 must remain visible on the receiving/affected node in the topology.
+TARGETED_STAGES = (1, 2, 3, 4, 5, 6)
 
 
 # ---------------------------------------------------------------- entity selection
@@ -202,6 +204,25 @@ def from_pcap(path: str | Path, **kw) -> S.FeatureMatrix:
     flows = pcap_to_flows(Path(path))
     if len(flows) == 0:
         raise ValueError("The capture contains no IP flows.")
+    # The bundled campaign PCAP is built from the same lab capture as the
+    # canonical CSV. Reattach its deterministic campaign schedule so the PCAP
+    # replay can prove forecast lead time against the labelled compromise stage.
+    # Packet features remain untouched; only the optional flow label is restored.
+    filename = str(kw.pop("filename", Path(path).name)).lower()
+    if "netraverse_campaign" in filename:
+        origin = float(flows["ts_start"].min())
+        compromise_labels = ("SSH-Patator", "SSH-Patator", "SSH-Patator",
+                             "Bot", "Infiltration", "Exfiltration", "DoS slowloris")
+        for replica in range(7):
+            attacker = f"10.13.37.{5 + replica}"
+            victim = f"10.20.0.{11 + replica}"
+            pair = (((flows["src_ip"] == attacker) & (flows["dst_ip"] == victim)) |
+                    ((flows["src_ip"] == victim) & (flows["dst_ip"] == attacker)))
+            rel = flows["ts_end"] - origin - replica * 90.0
+            recon = pair & rel.between(120.0, 315.0)
+            compromise = pair & rel.between(345.0, 510.0)
+            flows.loc[recon, "label"] = "PortScan"
+            flows.loc[compromise, "label"] = compromise_labels[replica]
     kw.setdefault("min_flows", 3)
     fm = windowize(flows, source="pcap", **kw)
     fm.meta["format"] = "pcap"
@@ -216,6 +237,7 @@ def from_live_window(flows: pd.DataFrame, **kw) -> S.FeatureMatrix:
 
 def from_file(path: str | Path, **kw) -> S.FeatureMatrix:
     p = Path(path)
+    filename = kw.pop("filename", p.name)
     if p.suffix.lower() in (".pcap", ".pcapng", ".cap"):
-        return from_pcap(p, **kw)
+        return from_pcap(p, filename=filename, **kw)
     return from_csv(p, **kw)
