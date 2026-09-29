@@ -2,6 +2,10 @@
 [server]
 headless = true
 runOnSave = false
+# Streamlit defaults both values to 200 MB. Keep large forensic captures usable
+# while retaining an explicit operational ceiling instead of truncating uploads.
+maxUploadSize = 4096
+maxMessageSize = 4096
 
 [browser]
 gatherUsageStats = false

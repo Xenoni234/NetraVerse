@@ -1,61 +1,44 @@
-# NetraVerse demo script (2 minutes)
+# NetraVerse demo walkthrough
 
-The story arc: baseline → attack escalation → detection with explanation → decision → re-rollout showing the risk drop.
+The story arc: baseline → attack escalation → forecast with explanation → decision → re-rollout showing the risk change.
 
-## 0. SIH recording click-path (the reliable version — bundled, offline)
+## Analyst console (netraverse_ui)
 
-Use the assembled multi-attack campaign so several real attacks run at once and mitigating one leaves
-the others for the camera. Regenerate the files (once) with `python -m demo.make_demo_scenario`.
+```bash
+cd netraverse_ui && python server.py     # -> http://localhost:8600
+```
 
-1. **CSV Upload → `netraverse_campaign.csv` → Analyse.** Press **▶ Play** (2x).
-2. Four campaigns forecast the compromise **during reconnaissance** (real +120–180 s lead). At the first
-   sustained alert playback pauses; the **detection banner** reads *"Forecast the compromise … before it
-   began — raised during reconnaissance."* The **MITRE kill-chain strip**, **campaign board** (all four
-   attacks) and **what-if** menu are shown below the 3D graph.
-3. Click **Accept** on the recommended **block** → the **outcome comparison** and re-rollout show the
-   risk collapse for that host; the **campaign board** still lists the other three attacks alerting.
-4. Click **Generate incident report (PDF) → Download** for the one-page incident report.
-5. (Optional) **PCAP Upload → `netraverse_campaign.pcap`** shows the full packet→flow→forecast pipeline
-   with two concurrent attackers.
+Open the landing page → **Launch analyst console**. Three modes share one model and one decision loop:
 
-**Live (phone) segment:** enter any **Operator token** (unlocks Live Monitor) → **Start sensor** →
-scan `192.168.0.201` from the phone (`nmap -p 1-1024 -T4 192.168.0.201`) → the alert fires during recon
-→ **Accept "Block all traffic from &lt;phone&gt;"** → status shows **contained**, the attacker node stays
-on the graph (green), and the forecast line **drops** within a tick. Optionally arm **Auto-contain** for
-the autonomous version.
+**CSV Upload**
+1. Upload a flow CSV (e.g. `demo/samples/netraverse_campaign.csv`) → the pipeline parses it and builds the host graph from the real IPs in the file.
+2. Press **▶ Replay** (1x / 2x / 4x). Campaigns are forecast *ahead of onset*; at the first sustained alert playback pauses and the decision modal opens with the MITRE stage, probability, lead time, SHAP evidence and a local-LLM narration.
+3. Choose **Accept / Modify / Reject** — Accept mitigates (risk decays), Reject shows the cost of inaction (risk rises to Impact). Later campaigns are forecast independently.
+4. When the replay finishes, the analysis appears below the topology: the full forecast chart, the observed-vs-imagined state map, the attack-forecast log, the decision audit (risk before/after) and per-campaign SHAP.
 
-## A. File replay (always works, offline)
+**PCAP Upload** — upload a capture (e.g. `demo/fallback_pcap/netraverse_campaign.pcap`); the packets are parsed to flows, the host graph is rebuilt from the real IPs, and the same forecast → decide flow runs.
 
-1. Start the backend with `uvicorn src.api.main:app --port 8000`. Then start the dashboard with `streamlit run dashboard/app.py`.
-2. In the sidebar pick **CSV Upload**, then choose the bundled sample `cic2017_webattack_thursday.csv` and click **Analyse**.
+**Live Monitor** — a live sensor stream with a stable benign baseline. Drive campaigns from a second terminal:
+
+```bash
+python launch_recon_scan.py        # start a campaign (Ctrl+C to stop it)
+python launch_brute_force.py
+python stop_attack.py              # stop all active campaigns
+```
+
+Each launched campaign is forecast in real time; Accept/Modify/Reject behave as in upload mode.
+
+## Backend + Streamlit dashboard
+
+1. Start the backend: `uvicorn src.api.main:app --port 8000`. Then the dashboard: `streamlit run dashboard/app.py`.
+2. Pick **CSV Upload**, choose a bundled sample (e.g. `cic2017_webattack_thursday.csv`) and click **Analyse**.
 3. Press **▶ Play** at 2x.
-   - The 3D host graph shows the lab network. The forecast curve on the right builds one 60 s window at a time.
-   - The dashed segment is the world model's own 300 s imagined rollout from the current window.
-4. Around t+15 min the web brute force starts. The attacker's NAT address (`172.16.0.1`) turns red-orange and the web server (`192.168.10.50`) turns amber. Hot edges carry attack particles.
-   - The attacker and victim roles are derived from the forecast plus traffic direction. They are not hardcoded.
-5. At the first sustained alert (t+16 min) playback **pauses** on its own. The decision panel shows:
-   - the stage (Initial Access, TA0001)
-   - the recommended action from the rule engine (block `172.16.0.1 -> 192.168.10.50:80`)
-   - its rationale
-   - the integrated-gradients evidence
-6. Click **Accept**. The recorded traffic is replayed with the block applied from that minute onward.
-   - The green curve is the re-simulated future. The grey dotted curve is what actually happened without the action.
-   - The counterfactual panel shows the peak before and after.
-7. **⏮ Restart**, then **Reject**, shows the cost of inaction on the same timeline. **Modify** offers the rule engine's alternatives (rate-limit, block only the pair, …).
+   - The 3D host graph shows the network. The forecast curve builds one 60 s window at a time; the dashed segment is the world model's 300 s imagined rollout from the current window.
+   - Attacker/victim roles are derived from the forecast plus traffic direction, not hardcoded.
+4. At the first sustained alert, playback **pauses**. The decision panel shows the MITRE stage, the recommended action from the rule engine, its rationale and the integrated-gradients evidence.
+5. Click **Accept** — the traffic is re-rolled with the action applied. The counterfactual panel compares the risk peak before and after. **Reject** shows the cost of inaction; **Modify** offers the rule engine's alternatives.
+6. Optional: **Generate incident report (PDF)** for a one-page summary.
 
-Other samples (all alert except the PortScan and CTU-13 slices):
-- `cic2017_bruteforce_tuesday.csv`: FTP/SSH-Patator, Initial Access
-- `cic2017_portscan_friday.csv`: the scan peaks at about 0.70 forecast risk, below the 0.85 alert threshold. Its main burst sits in the validation blocks, so the model saw few scans in training. This is shown honestly rather than tuned away.
-- `cic2017_dos_wednesday.csv`: slowloris/slowhttptest, Impact
-- `cic2017_botnet_friday.csv`: Ares bot, Command and Control
-- `ctu13_botnet_scenario10.binetflow`: Rbot ICMP DDoS from 10 infected hosts. The bots' risk stays below the threshold (CTU-13 recall is 0.33 at this operating point).
+## Live monitoring
 
-## B. Live home network (Phase 8/11)
-
-> **Status:** the shipped model does not yet recognise attacks on the home network (see `docs/LIVE_SENSOR.md`). Do the lab retraining first, and use file replay (A) for the demo until then.
-
-1. On the sensor laptop, start `nv-core` exactly as in `docs/LIVE_SENSOR.md`.
-2. On the dashboard PC, run `NV_API_URL=http://<sensor>:8000 streamlit run dashboard/app.py`, go to **Live Monitor**, and click **Start sensor**.
-3. Run the attack from the attacker machine against your **own** lab VM only (R11): `NV_I_OWN_THIS_TARGET=yes demo/attack_scripts/run_sequence.sh 192.168.0.50`.
-4. When the alert fires, click **Accept** (operator token in the sidebar). A real nftables rule is installed on the sensor with a TTL. The live curve then re-measures the real traffic and should fall.
-5. **Fallback (R12):** record the same sequence with `tcpdump` into `demo/fallback_pcap/live_demo.pcap`. If live capture fails during judging, replay it in **PCAP Upload** mode. You can also rehearse the live pipeline with `NV_LIVE_REPLAY_PCAP=demo/fallback_pcap/live_demo.pcap`.
+For live capture and enforcement (nftables), see [LIVE_SENSOR.md](../docs/LIVE_SENSOR.md). Test only against devices you own; keep a fallback PCAP of the sequence and replay it via **PCAP Upload** or `NV_LIVE_REPLAY_PCAP` if live capture is unavailable.

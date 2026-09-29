@@ -37,7 +37,7 @@ async def upload(file: UploadFile = File(...)):
     with open(dest, "wb") as fh:
         shutil.copyfileobj(file.file, fh)
     try:
-        fm = from_file(dest)
+        fm = from_file(dest, filename=file.filename or dest.name)
     except UnsupportedFormat as e:
         raise HTTPException(422, str(e))
     except ValueError as e:
@@ -57,7 +57,7 @@ def upload_path(path: str):
         raise HTTPException(403, "Only files inside the project directory can be analysed by path.")
     if not p.exists():
         raise HTTPException(404, f"{path} not found")
-    fm = from_file(p)
+    fm = from_file(p, filename=p.name)
     svc = get_service()
     return svc.overview(svc.analyze(fm, filename=p.name))
 
@@ -81,6 +81,11 @@ def timeline(aid: str, host: str):
     return get_service().timeline(_get(aid), host)
 
 
+@router.get("/{aid}/campaigns")
+def campaigns(aid: str, limit: int = 12):
+    return {"campaigns": get_service().campaign_overview(_get(aid), max(1, min(limit, 24)))}
+
+
 @router.get("/{aid}/branch")
 def branch(aid: str, host: str):
     return get_service().branch_timeline(_get(aid), host)
@@ -89,6 +94,11 @@ def branch(aid: str, host: str):
 @router.get("/{aid}/explain", response_model=list[Driver])
 def explain(aid: str, host: str, step: int):
     return get_service().explain_step(_get(aid), host, step)
+
+
+@router.get("/{aid}/shap")
+def shap(aid: str, host: str, step: int):
+    return get_service().shap_step(_get(aid), host, step)
 
 
 @router.get("/{aid}/topology", response_model=Topology)

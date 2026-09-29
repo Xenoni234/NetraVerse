@@ -1,12 +1,12 @@
 # Setup
 
-This guide covers setting up NetraVerse on a development machine (Windows or Linux) and on the Linux sensor laptop used for the live demo. Everything runs locally; nothing calls a cloud API at runtime (R10).
+This guide covers setting up NetraVerse on a development machine (Windows or Linux) and on an optional Linux sensor host for live monitoring. Everything runs locally; nothing calls a cloud API at runtime.
 
 ## 1. Requirements
 
 | | Version used / notes |
 |---|---|
-| Python | 3.11+. We develop on Windows with 3.13 and run the sensor laptop on Ubuntu with 3.12. |
+| Python | 3.11+ (developed on Windows 3.13 and Ubuntu 3.12). |
 | GPU | Optional. CUDA is used only when the installed torch build supports the card. Otherwise it falls back to CPU (see [TROUBLESHOOTING](TROUBLESHOOTING.md)). |
 | Ollama | Optional, for decision narration. Install from ollama.com, then run `ollama pull qwen2.5:3b` (any small model works). |
 | Node.js | Only needed to rebuild the 3D topology bundle. The built file is committed. |
@@ -64,16 +64,16 @@ python -m streamlit run dashboard/app.py                              # dashboar
 - In the dashboard, pick **CSV Upload**, then a bundled sample (or upload any CSV/PCAP), then **Analyse**, then **▶ Play**. The full walkthrough is in [`demo/demo_script.md`](../demo/demo_script.md).
 - If Ollama is running locally, decision points show an LLM narration. Otherwise they show a template text. Both are fine.
 
-## 5. Run it split across machines (our demo layout)
+## 5. Run it split across machines
 
 | Machine | Runs |
 |---|---|
-| Sensor laptop (Ubuntu, `wlp0s20f3`, Tailscale `100.72.80.52`) | API + live sensor + its own Ollama |
-| Dashboard PC (Windows, Tailscale `100.81.46.8`) | Streamlit only |
+| Sensor host (Linux, capture interface) | API + live sensor + local Ollama |
+| Dashboard host | Streamlit only |
 
 ```bash
-# dashboard PC
-set NV_API_URL=http://100.72.80.52:8000          # PowerShell: $env:NV_API_URL="http://100.72.80.52:8000"
+# dashboard host
+set NV_API_URL=http://<sensor-ip>:8000           # PowerShell: $env:NV_API_URL="http://<sensor-ip>:8000"
 python -m streamlit run dashboard/app.py
 ```
 
@@ -87,7 +87,7 @@ The sensor side is described in [LIVE_SENSOR.md](LIVE_SENSOR.md).
 | `NV_API_PUBLIC_URL` | dashboard | = `NV_API_URL` | Backend URL the **browser** uses to load the offline 3D bundle |
 | `NV_DEVICE` | backend | auto | Force `cpu` or `cuda` |
 | `NV_OLLAMA_URL` | backend | `http://127.0.0.1:11434` | Local Ollama |
-| `NV_OLLAMA_MODEL` | backend | `qwen2.5:3b` | Narration model (laptop uses `qwen2.5-coder:3b`) |
+| `NV_OLLAMA_MODEL` | backend | `qwen2.5:3b` | Narration model (any small local model) |
 | `NV_OLLAMA_TIMEOUT` | backend | `30` | Seconds before falling back to template narration |
 | `NV_NARRATION` | backend | `1` | `0` disables the LLM entirely |
 | `NV_LIVE_IFACE` | backend | - | Capture interface for Live Monitor |
@@ -100,7 +100,3 @@ The sensor side is described in [LIVE_SENSOR.md](LIVE_SENSOR.md).
 | `NV_NFT_TABLE` | backend | `netraverse` | nftables table used for rules |
 
 `.env.example` lists them too.
-
-## 7. Docker (optional, not maintained)
-
-`Dockerfile.backend`, `Dockerfile.dashboard` and `docker-compose.yml` exist. The backend and dashboard images were built and run once successfully, but **the team does not use or maintain Docker**. Run everything natively as above.

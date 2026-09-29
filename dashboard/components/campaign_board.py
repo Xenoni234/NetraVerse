@@ -25,6 +25,10 @@ def campaign_board(hosts: list[dict], threshold: float, window_s: int,
         peak = h.get("peak", 0.0)
         al = h.get("first_alert_step")
         when = f"t+{al * window_s // 60} min" if al is not None else "-"
+        lead = h.get("compromise_lead_s")
+        lead_txt = f"{lead}s" if lead is not None and lead > 0 else "-"
+        action = h.get("recommended_action") or {}
+        action_txt = action.get("label", "-")
         status = ("<span class='nv-pill ok'>contained</span>" if is_c
                   else "<span class='nv-pill atk'>alerting</span>")
         bar = (f"<div style='background:#202426;border-radius:3px;height:7px;width:90px'>"
@@ -33,7 +37,7 @@ def campaign_board(hosts: list[dict], threshold: float, window_s: int,
             f"<tr><td class='nv-mono'>{host}</td>"
             f"<td style='color:{col}'>{h.get('stage_name', '-')}</td>"
             f"<td>{bar}</td><td class='nv-mono'>{peak:.0%}</td>"
-            f"<td>{when}</td><td>{status}</td></tr>")
+                    f"<td>{when}</td><td class='nv-mono'>{lead_txt}</td><td>{action_txt}</td><td>{status}</td></tr>")
     st.html(f"""<div class='nv-card'><div class='nv-h'>{title}</div>
       <table class='nv-board'><tr><th>host</th><th>stage</th><th>risk</th><th></th>
-      <th>first alert</th><th>status</th></tr>{''.join(body)}</table></div>""")
+      <th>first alert</th><th>lead time</th><th>recommended action</th><th>status</th></tr>{''.join(body)}</table></div>""")

@@ -79,6 +79,13 @@ def _stage(f: pd.DataFrame):
     return f["label"].map(label_to_stage)
 
 
+def _retag_compromise(f: pd.DataFrame, label: str) -> pd.DataFrame:
+    """Keep genuine traffic features while assigning the selected ATT&CK stage."""
+    out = f.copy()
+    out.loc[_stage(out) >= 2, "label"] = label
+    return out
+
+
 def _kill_chain(recon: pd.DataFrame, comp: pd.DataFrame, comp_mask, attacker: str, victim: str,
                 start_min: float, recon_min: float = 5.0, gap_min: float = 2.0) -> pd.DataFrame:
     """Compose a real recon precursor + a real (different) compromise onto one victim so the model
@@ -100,10 +107,10 @@ def _make_pcap() -> None:
     if not src:
         print("  ! no lab pcap for the demo capture, skipping"); return
     with PcapReader(str(src[0])) as rd:
-        pkts = [p for i, p in enumerate(rd) if i < 20000]
+        pkts = [p for i, p in enumerate(rd) if i < 50000]
     t0 = min(float(p.time) for p in pkts)       # packets are not strictly time-ordered on the wire
-    # attacker A = real .227->.201 relabelled; attacker B = the same real packets, a second IP,
-    # shifted +90 s so the two campaigns overlap on the victim.
+    # Replay seven deterministic safe campaigns. Packet payloads remain local
+    # fixture data; this function never transmits them.
     def rewrite(remap: dict, extra_shift: float):
         res = []
         for p in pkts:                                   # pkts stays pristine; work on copies
@@ -118,13 +125,15 @@ def _make_pcap() -> None:
             res.append(q)
         return res
 
-    out = rewrite({"192.168.0.227": "10.13.37.5", "192.168.0.201": "10.20.0.11"}, 0)
-    out += rewrite({"192.168.0.227": "10.13.37.6", "192.168.0.201": "10.20.0.12"}, 90)
+    out = []
+    for i in range(7):
+        out += rewrite({"192.168.0.227": f"10.13.37.{5 + i}",
+                        "192.168.0.201": f"10.20.0.{11 + i}"}, i * 90)
     out.sort(key=lambda p: float(p.time))
     OUT_PCAP.parent.mkdir(parents=True, exist_ok=True)
     wrpcap(str(OUT_PCAP), out)
     dur = (float(out[-1].time) - float(out[0].time)) / 60
-    print(f"\nPCAP -> {OUT_PCAP}  ({len(out):,} packets, 2 attackers, {dur:.0f} min)")
+    print(f"\nPCAP -> {OUT_PCAP}  ({len(out):,} packets, 7 safe campaign replicas, {dur:.0f} min)")
 
 
 def main() -> None:
@@ -132,33 +141,55 @@ def main() -> None:
     lab4 = _lab_flows("lab_test")               # real recon -> SSH brute (session4)
     lab5 = _lab_flows("lab")                    # real recon -> SSH brute (session5, 4 cycles)
     ftp = _cic("cic2017_bruteforce_tuesday.csv")
+    bot = _cic("cic2017_botnet_friday.csv")
+    web = _cic("cic2017_webattack_thursday.csv")
     dos = _cic("cic2017_dos_wednesday.csv")
 
-    # Each campaign has a recon precursor so the model forecasts the compromise DURING the scan.
-    # 1-2 are native lab kill-chains; 3-4 compose real lab recon + a real (different) CIC compromise.
-    episodes = [
+    # Every campaign has a recon precursor and a staged compromise. The selected
+    # rows retain genuine capture features; retagging only supplies the ATT&CK
+    # family needed to make every risk stage visible in the replay.
+    base_episodes = [
         ("recon->SSH brute (lab-4)", _slice(lab4, _stage(lab4) >= 1, "10.13.37.5", "10.20.0.11",
                                             start_min=10, lead_in_min=1, span_min=16)),
         ("recon->SSH brute (lab-5)", _slice(lab5, _stage(lab5) >= 1, "10.13.37.6", "10.20.0.12",
                                             start_min=9, lead_in_min=1, span_min=16)),
         ("recon->FTP brute (chain)", _kill_chain(lab4, ftp, ftp["label"].str.contains("Patator"),
                                                  "10.13.37.7", "10.20.0.13", start_min=12)),
+        ("recon->C2 bot (chain)", _kill_chain(lab5, bot, bot["label"].str.contains("Bot"),
+                                               "10.13.37.8", "10.20.0.14", start_min=14)),
+        ("recon->lateral pivot (chain)", _retag_compromise(
+            _kill_chain(lab4, web, web["label"].str.contains("Web Attack"),
+                        "10.13.37.9", "10.20.0.15", start_min=16), "Infiltration")),
+        ("recon->exfiltration (chain)", _retag_compromise(
+            _kill_chain(lab4, ftp, ftp["label"].str.contains("Patator"),
+                        "10.13.37.10", "10.20.0.16", start_min=18), "Exfiltration")),
         ("recon->DoS (chain)", _kill_chain(lab5, dos, dos["label"].str.contains("DoS"),
-                                           "10.13.37.8", "10.20.0.14", start_min=14)),
+                                           "10.13.37.11", "10.20.0.17", start_min=20)),
     ]
 
+    # Three staggered copies make the upload artifact large enough to exercise
+    # the large-file path while retaining the same validated feature profiles.
     parts = []
-    for name, ep in episodes:
-        if ep.empty:
-            print(f"  ! {name}: no attack flows found, skipped")
-            continue
-        ep = ep.copy()
-        ep["ts_start"] += base
-        ep["ts_end"] += base
-        parts.append(ep)
-        stg = ep["label"].map(label_to_stage)
-        print(f"  {name:26s} flows={len(ep):6d}  recon={int((stg == 1).sum()):4d}  "
-              f"compromise={int((stg >= 2).sum()):5d}")
+    for replica in range(3):
+        ip_map = {}
+        if replica:
+            for i in range(7):
+                ip_map[f"10.13.37.{5 + i}"] = f"10.13.{37 + replica}.{5 + i}"
+                ip_map[f"10.20.0.{11 + i}"] = f"10.20.{replica}.{11 + i}"
+        for name, original in base_episodes:
+            if original.empty:
+                print(f"  ! {name}: no attack flows found, skipped")
+                continue
+            ep = original.copy()
+            if ip_map:
+                ep["src_ip"] = ep["src_ip"].replace(ip_map)
+                ep["dst_ip"] = ep["dst_ip"].replace(ip_map)
+            ep["ts_start"] += base + replica * 32 * 60
+            ep["ts_end"] += base + replica * 32 * 60
+            parts.append(ep)
+            stg = ep["label"].map(label_to_stage)
+            print(f"  {name} r{replica + 1:02d}        flows={len(ep):6d}  recon={int((stg == 1).sum()):4d}  "
+                  f"compromise={int((stg >= 2).sum()):5d}")
 
     df = pd.concat(parts, ignore_index=True).sort_values("ts_end").reset_index(drop=True)
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)

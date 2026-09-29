@@ -32,6 +32,7 @@ class Enforcement:
     commands: list[str] = field(default_factory=list)
     message: str = ""
     expires_at: float | None = None
+    mode: str = "none"
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -82,7 +83,15 @@ def apply(action: Action, live: bool = False) -> Enforcement:
         return Enforcement(action.id, live, False, True, message="Monitor only - nothing applied.")
     if not live:
         return Enforcement(action.id, False, True, True,
-                           message="Simulated: traffic replayed with the action applied.")
+                           message="Simulated: traffic replayed with the action applied.",
+                           mode="upload_counterfactual")
+    # Safe rehearsal is the only path used by the local scenario commands. It
+    # reports an applied decision to the replay engine, but deliberately never
+    # builds or executes an nftables command.
+    if os.environ.get("NV_LIVE_MODE", "").strip().lower() in {"rehearsal", "safe_rehearsal"}:
+        return Enforcement(action.id, True, True, True,
+                           message="Applied to the safe rehearsal stream; no host firewall changed.",
+                           expires_at=time.time() + action.ttl_s, mode="safe_rehearsal")
     ips = [action.target, action.peer, *action.peers]
     ips = [i for i in ips if i]
     bad = [i for i in ips if not _valid_ip(i)]
